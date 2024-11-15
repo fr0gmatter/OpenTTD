@@ -48,7 +48,8 @@ public:
 		TOWN_ACTION_ADVERTISE_LARGE  = 2,
 
 		/**
-		 * Rebuild the roads of this town for 6 months.
+		 * Rebuild the roads of this town for 6 economy-months.
+		 * @see \ref ScriptEconomyTime
 		 */
 		TOWN_ACTION_ROAD_REBUILD     = 3,
 
@@ -58,12 +59,14 @@ public:
 		TOWN_ACTION_BUILD_STATUE     = 4,
 
 		/**
-		 * Fund the creation of extra buildings for 3 months.
+		 * Fund the creation of extra buildings for 3 economy-months.
+		 * @see \ref ScriptEconomyTime
 		 */
 		TOWN_ACTION_FUND_BUILDINGS   = 5,
 
 		/**
-		 * Buy exclusive rights for this town for 12 months.
+		 * Buy exclusive rights for this town for 12 economy-months.
+		 * @see \ref ScriptEconomyTime
 		 */
 		TOWN_ACTION_BUY_RIGHTS       = 6,
 
@@ -98,6 +101,7 @@ public:
 		ROAD_LAYOUT_BETTER_ROADS  = ::TL_BETTER_ROADS, ///< Extended original algorithm (min. 2 distance between roads).
 		ROAD_LAYOUT_2x2           = ::TL_2X2_GRID,     ///< Geometric 2x2 grid algorithm
 		ROAD_LAYOUT_3x3           = ::TL_3X3_GRID,     ///< Geometric 3x3 grid algorithm
+		ROAD_LAYOUT_RANDOM        = ::TL_RANDOM,       ///< Random road layout
 
 		/* Custom added value, only valid for this API */
 		ROAD_LAYOUT_INVALID       = -1,                ///< The layout for invalid towns.
@@ -126,7 +130,7 @@ public:
 	 * Gets the number of towns.
 	 * @return The number of towns.
 	 */
-	static int32 GetTownCount();
+	static SQInteger GetTownCount();
 
 	/**
 	 * Checks whether the given town index is valid.
@@ -141,13 +145,14 @@ public:
 	 * @pre IsValidTown(town_id).
 	 * @return The name of the town.
 	 */
-	static char *GetName(TownID town_id);
+	static std::optional<std::string> GetName(TownID town_id);
 
 	/**
 	 * Rename a town.
 	 * @param town_id The town to rename
-	 * @param name The new name of the town. If null is passed, the town name will be reset to the default name.
+	 * @param name The new name of the town. If null, or an empty string, is passed, the town name will be reset to the default name.
 	 * @pre IsValidTown(town_id).
+	 * @pre ScriptCompanyMode::IsDeity().
 	 * @return True if the action succeeded.
 	 * @api -ai
 	 */
@@ -156,8 +161,9 @@ public:
 	/**
 	 * Set the custom text of a town, shown in the GUI.
 	 * @param town_id The town to set the custom text of.
-	 * @param text The text to set it to (can be either a raw string, or a ScriptText object). If null is passed, the text will be removed.
+	 * @param text The text to set it to (can be either a raw string, or a ScriptText object). If null, or an empty string, is passed, the text will be removed.
 	 * @pre IsValidTown(town_id).
+	 * @pre ScriptCompanyMode::IsDeity().
 	 * @return True if the action succeeded.
 	 * @api -ai
 	 */
@@ -169,7 +175,7 @@ public:
 	 * @pre IsValidTown(town_id).
 	 * @return The number of inhabitants.
 	 */
-	static int32 GetPopulation(TownID town_id);
+	static SQInteger GetPopulation(TownID town_id);
 
 	/**
 	 * Gets the number of houses in the town.
@@ -177,7 +183,7 @@ public:
 	 * @pre IsValidTown(town_id).
 	 * @return The number of houses.
 	 */
-	static int32 GetHouseCount(TownID town_id);
+	static SQInteger GetHouseCount(TownID town_id);
 
 	/**
 	 * Gets the location of the town.
@@ -188,92 +194,102 @@ public:
 	static TileIndex GetLocation(TownID town_id);
 
 	/**
-	 * Get the total last month's production of the given cargo at a town.
+	 * Get the total last economy-month's production of the given cargo at a town.
 	 * @param town_id The index of the town.
 	 * @param cargo_id The index of the cargo.
 	 * @pre IsValidTown(town_id).
 	 * @pre ScriptCargo::IsValidCargo(cargo_id).
-	 * @return The last month's production of the given cargo for this town.
+	 * @return The last economy-month's production of the given cargo for this town.
+	 * @see \ref ScriptEconomyTime
 	 */
-	static int32 GetLastMonthProduction(TownID town_id, CargoID cargo_id);
+	static SQInteger GetLastMonthProduction(TownID town_id, CargoID cargo_id);
 
 	/**
-	 * Get the total amount of cargo supplied from a town last month.
+	 * Get the total amount of cargo supplied from a town last economy-month.
 	 * @param town_id The index of the town.
 	 * @param cargo_id The index of the cargo.
 	 * @pre IsValidTown(town_id).
 	 * @pre ScriptCargo::IsValidCargo(cargo_id).
-	 * @return The amount of cargo supplied for transport from this town last month.
+	 * @return The amount of cargo supplied for transport from this town last economy-month.
+	 * @see \ref ScriptEconomyTime
 	 */
-	static int32 GetLastMonthSupplied(TownID town_id, CargoID cargo_id);
+	static SQInteger GetLastMonthSupplied(TownID town_id, CargoID cargo_id);
 
 	/**
-	 * Get the percentage of transported production of the given cargo at a town.
+	 * Get the percentage of transported production of the given cargo at a town last economy-month.
 	 * @param town_id The index of the town.
 	 * @param cargo_id The index of the cargo.
 	 * @pre IsValidTown(town_id).
 	 * @pre ScriptCargo::IsValidCargo(cargo_id).
-	 * @return The percentage of given cargo transported from this town last month.
+	 * @return The percentage of given cargo transported from this town last economy-month.
+	 * @see \ref ScriptEconomyTime
 	 */
-	static int32 GetLastMonthTransportedPercentage(TownID town_id, CargoID cargo_id);
+	static SQInteger GetLastMonthTransportedPercentage(TownID town_id, CargoID cargo_id);
 
 	/**
-	 * Get the total amount of cargo effects received by a town last month.
+	 * Get the total amount of cargo effects received by a town last economy-month.
 	 * @param town_id The index of the town.
 	 * @param towneffect_id The index of the cargo.
 	 * @pre IsValidTown(town_id).
 	 * @pre ScriptCargo::IsValidTownEffect(cargo_id).
-	 * @return The amount of cargo received by this town last month for this cargo effect.
+	 * @return The amount of cargo received by this town last economy-month for this cargo effect.
+	 * @see \ref ScriptEconomyTime
 	 */
-	static int32 GetLastMonthReceived(TownID town_id, ScriptCargo::TownEffect towneffect_id);
+	static SQInteger GetLastMonthReceived(TownID town_id, ScriptCargo::TownEffect towneffect_id);
 
 	/**
-	 * Set the goal of a cargo for this town.
+	 * Set the goal of a cargo per economy-month for this town.
 	 * @param town_id The index of the town.
 	 * @param towneffect_id The index of the towneffect.
-	 * @param goal The new goal.
+	 * @param goal The new goal amount for cargo delivered per economy-month.
+	 *             The value will be clamped to 0 .. MAX(uint32_t).
 	 * @pre IsValidTown(town_id).
 	 * @pre ScriptCargo::IsValidTownEffect(towneffect_id).
+	 * @pre ScriptCompanyMode::IsDeity().
 	 * @return True if the action succeeded.
+	 * @see \ref ScriptEconomyTime
 	 * @api -ai
 	 */
-	static bool SetCargoGoal(TownID town_id, ScriptCargo::TownEffect towneffect_id, uint32 goal);
+	static bool SetCargoGoal(TownID town_id, ScriptCargo::TownEffect towneffect_id, SQInteger goal);
 
 	/**
-	 * Get the amount of cargo that needs to be delivered (per TownEffect) for a
+	 * Get the amount of cargo per economy-month that needs to be delivered (per TownEffect) for a
 	 *  town to grow. All goals need to be reached before a town will grow.
 	 * @param town_id The index of the town.
 	 * @param towneffect_id The index of the towneffect.
 	 * @pre IsValidTown(town_id).
 	 * @pre ScriptCargo::IsValidTownEffect(towneffect_id).
-	 * @return The goal of the cargo.
+	 * @return The goal of the cargo (amount per economy-month).
 	 * @note Goals can change over time. For example with a changing snowline, or
 	 *  with a growing town.
+	 * @see \ref ScriptEconomyTime
 	 */
-	static uint32 GetCargoGoal(TownID town_id, ScriptCargo::TownEffect towneffect_id);
+	static SQInteger GetCargoGoal(TownID town_id, ScriptCargo::TownEffect towneffect_id);
 
 	/**
-	 * Set the amount of days between town growth.
+	 * Set the amount of economy-days between town growth.
 	 * @param town_id The index of the town.
-	 * @param days_between_town_growth The amount of days between town growth, TOWN_GROWTH_NONE or TOWN_GROWTH_NORMAL.
+	 * @param days_between_town_growth The amount of economy-days between town growth, TOWN_GROWTH_NONE or TOWN_GROWTH_NORMAL.
 	 * @pre IsValidTown(town_id).
 	 * @pre days_between_town_growth <= 880 || days_between_town_growth == TOWN_GROWTH_NONE || days_between_town_growth == TOWN_GROWTH_NORMAL.
 	 * @return True if the action succeeded.
 	 * @note Even when setting a growth rate, towns only grow when the conditions for growth (SetCargoCoal) are met,
 	 *       and the game settings (economy.town_growth_rate) allow town growth at all.
 	 * @note When changing the growth rate, the relative progress is preserved and scaled to the new rate.
+	 * @see \ref ScriptEconomyTime
 	 * @api -ai
 	 */
-	static bool SetGrowthRate(TownID town_id, uint32 days_between_town_growth);
+	static bool SetGrowthRate(TownID town_id, SQInteger days_between_town_growth);
 
 	/**
-	 * Get the amount of days between town growth.
+	 * Get the amount of economy-days between town growth.
 	 * @param town_id The index of the town.
 	 * @pre IsValidTown(town_id).
-	 * @return Amount of days between town growth, or TOWN_GROWTH_NONE.
+	 * @return Amount of economy-days between town growth, or TOWN_GROWTH_NONE.
 	 * @note This function does not indicate when it will grow next. It only tells you the time between growths.
+	 * @see \ref ScriptEconomyTime
 	 */
-	static int32 GetGrowthRate(TownID town_id);
+	static SQInteger GetGrowthRate(TownID town_id);
 
 	/**
 	 * Get the manhattan distance from the tile to the ScriptTown::GetLocation()
@@ -283,7 +299,7 @@ public:
 	 * @pre IsValidTown(town_id).
 	 * @return The distance between town and tile.
 	 */
-	static int32 GetDistanceManhattanToTile(TownID town_id, TileIndex tile);
+	static SQInteger GetDistanceManhattanToTile(TownID town_id, TileIndex tile);
 
 	/**
 	 * Get the square distance from the tile to the ScriptTown::GetLocation()
@@ -293,7 +309,7 @@ public:
 	 * @pre IsValidTown(town_id).
 	 * @return The distance between town and tile.
 	 */
-	static int32 GetDistanceSquareToTile(TownID town_id, TileIndex tile);
+	static SQInteger GetDistanceSquareToTile(TownID town_id, TileIndex tile);
 
 	/**
 	 * Find out if this tile is within the rating influence of a town.
@@ -310,7 +326,7 @@ public:
 	 * Find out if this town has a statue for the current company.
 	 * @param town_id The town to check.
 	 * @pre IsValidTown(town_id).
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @return True if the town has a statue.
 	 */
 	static bool HasStatue(TownID town_id);
@@ -327,25 +343,27 @@ public:
 	 * Find out how long the town is undergoing road reconstructions.
 	 * @param town_id The town to check.
 	 * @pre IsValidTown(town_id).
-	 * @return The number of months the road reworks are still going to take.
+	 * @return The number of economy-months the road reworks are still going to take.
 	 *         The value 0 means that there are currently no road reworks.
+	 * @see \ref ScriptEconomyTime
 	 */
-	static int GetRoadReworkDuration(TownID town_id);
+	static SQInteger GetRoadReworkDuration(TownID town_id);
 
 	/**
 	 * Find out how long new buildings are still being funded in a town.
 	 * @param town_id The town to check.
 	 * @pre IsValidTown(town_id).
-	 * @return The number of months building construction is still funded.
+	 * @return The number of economy-months building construction is still funded.
 	 *         The value 0 means that there is currently no funding.
+	 * @see \ref ScriptEconomyTime
 	 */
-	static int GetFundBuildingsDuration(TownID town_id);
+	static SQInteger GetFundBuildingsDuration(TownID town_id);
 
 	/**
 	 * Find out which company currently has the exclusive rights of this town.
 	 * @param town_id The town to check.
 	 * @pre IsValidTown(town_id).
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @return The company that has the exclusive rights. The value
 	 *         ScriptCompany::COMPANY_INVALID means that there are currently no
 	 *         exclusive rights given out to anyone.
@@ -356,18 +374,19 @@ public:
 	 * Find out how long the town is under influence of the exclusive rights.
 	 * @param town_id The town to check.
 	 * @pre IsValidTown(town_id).
-	 * @return The number of months the exclusive rights hold.
+	 * @return The number of economy-months the exclusive rights hold.
 	 *         The value 0 means that there are currently no exclusive rights
 	 *         given out to anyone.
+	 * @see \ref ScriptEconomyTime
 	 */
-	static int32 GetExclusiveRightsDuration(TownID town_id);
+	static SQInteger GetExclusiveRightsDuration(TownID town_id);
 
 	/**
 	 * Find out if an action can currently be performed on the town.
 	 * @param town_id The town to perform the action on.
 	 * @param town_action The action to perform on the town.
 	 * @pre IsValidTown(town_id).
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @return True if and only if the action can performed.
 	 */
 	static bool IsActionAvailable(TownID town_id, TownAction town_action);
@@ -378,7 +397,7 @@ public:
 	 * @param town_action The action to perform on the town.
 	 * @pre IsValidTown(town_id).
 	 * @pre IsActionAvailable(town_id, town_action).
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @return True if the action succeeded.
 	 */
 	static bool PerformTownAction(TownID town_id, TownAction town_action);
@@ -387,12 +406,14 @@ public:
 	 * Expand the town.
 	 * @param town_id The town to expand.
 	 * @param houses The amount of houses to grow the town with.
+	 *               The value will be clamped to 0 .. MAX(uint32_t).
 	 * @pre IsValidTown(town_id).
 	 * @pre houses > 0.
+	 * @pre ScriptCompanyMode::IsDeity().
 	 * @return True if the action succeeded.
 	 * @api -ai
 	 */
-	static bool ExpandTown(TownID town_id, int houses);
+	static bool ExpandTown(TownID town_id, SQInteger houses);
 
 	/**
 	 * Found a new town.
@@ -400,15 +421,15 @@ public:
 	 * @param size The town size of the new town.
 	 * @param city True if the new town should be a city.
 	 * @param layout The town layout of the new town.
-	 * @param name The name of the new town. Pass nullptr to use a random town name.
-	 * @game @pre no company mode in scope || ScriptSettings.GetValue("economy.found_town") != 0.
+	 * @param name The name of the new town. Pass null, or an empty string, to use a random town name.
+	 * @game @pre ScriptCompanyMode::IsDeity() || ScriptSettings.GetValue("economy.found_town") != 0.
 	 * @ai @pre ScriptSettings.GetValue("economy.found_town") != 0.
-	 * @game @pre no company mode in scope || size != TOWN_SIZE_LARGE.
+	 * @game @pre ScriptCompanyMode::IsDeity() || size != TOWN_SIZE_LARGE.
 	 * @ai @pre size != TOWN_SIZE_LARGE.
 	 * @pre size != TOWN_SIZE_INVALID.
 	 * @pre layout != ROAD_LAYOUT_INVALID.
 	 * @return True if the action succeeded.
-	 * @game @note Companies are restricted by the advanced setting that controls if funding towns is allowed or not. If custom road layout is forbidden and there is a company mode in scope, the layout parameter will be ignored.
+	 * @game @note Companies are restricted by the advanced setting that controls if funding towns is allowed or not. If custom road layout is forbidden and there is a company mode in scope (ScriptCompanyMode::IsValid()), the layout parameter will be ignored.
 	 * @ai @note AIs are restricted by the advanced setting that controls if funding towns is allowed or not. If custom road layout is forbidden, the layout parameter will be ignored.
 	 */
 	static bool FoundTown(TileIndex tile, TownSize size, bool city, RoadLayout layout, Text *name);
@@ -432,7 +453,7 @@ public:
 	 * @return The rating as a number between -1000 (worst) and 1000 (best).
 	 * @api -ai
 	 */
-	static int GetDetailedRating(TownID town_id, ScriptCompany::CompanyID company_id);
+	static SQInteger GetDetailedRating(TownID town_id, ScriptCompany::CompanyID company_id);
 
 	/**
 	 * Change the rating of a company within a town.
@@ -442,10 +463,10 @@ public:
 	 * @return True if the rating was changed.
 	 * @pre IsValidTown(town_id).
 	 * @pre ScriptCompany.ResolveCompanyID(company) != ScriptCompany::COMPANY_INVALID.
-	 * @pre no company mode in scope
+	 * @pre ScriptCompanyMode::IsDeity().
 	 * @api -ai
 	 */
-	static bool ChangeRating(TownID town_id, ScriptCompany::CompanyID company_id, int delta);
+	static bool ChangeRating(TownID town_id, ScriptCompany::CompanyID company_id, SQInteger delta);
 
 	/**
 	 * Get the maximum level of noise that still can be added by airports
@@ -453,7 +474,7 @@ public:
 	 * @param town_id The town to get the allowed noise from.
 	 * @return The noise that still can be added.
 	 */
-	static int GetAllowedNoise(TownID town_id);
+	static SQInteger GetAllowedNoise(TownID town_id);
 
 	/**
 	 * Get the road layout for a town.

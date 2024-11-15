@@ -11,7 +11,7 @@
 #define WIDGETS_SMALLMAP_WIDGET_H
 
 /** Widgets of the #SmallMapWindow class. */
-enum SmallMapWidgets {
+enum SmallMapWidgets : WidgetID {
 	WID_SM_CAPTION,        ///< Caption of the window.
 	WID_SM_MAP_BORDER,     ///< Border around the smallmap.
 	WID_SM_MAP,            ///< Panel containing the smallmap.
@@ -32,6 +32,8 @@ enum SmallMapWidgets {
 	WID_SM_ENABLE_ALL,     ///< Button to enable display of all legend entries.
 	WID_SM_DISABLE_ALL,    ///< Button to disable display of all legend entries.
 	WID_SM_SHOW_HEIGHT,    ///< Show heightmap toggle button.
+	WID_SM_SHOW_IND_NAMES, ///< Show industry names toggle button.
+	WID_SM_SHOW_IND_NAMES_SEL, ///< Container for the 'show industry names' button, which can be hidden.
 };
 
 #endif /* WIDGETS_SMALLMAP_WIDGET_H */

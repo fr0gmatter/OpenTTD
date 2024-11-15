@@ -31,8 +31,9 @@
 	return ::Subsidy::Get(subsidy_id)->IsAwarded();
 }
 
-/* static */ bool ScriptSubsidy::Create(CargoID cargo_type, SubsidyParticipantType from_type, uint16 from_id, SubsidyParticipantType to_type, uint16 to_id)
+/* static */ bool ScriptSubsidy::Create(CargoID cargo_type, SubsidyParticipantType from_type, SQInteger from_id, SubsidyParticipantType to_type, SQInteger to_id)
 {
+	EnforceDeityMode(false);
 	EnforcePrecondition(false, ScriptCargo::IsValidCargo(cargo_type));
 	EnforcePrecondition(false, from_type == SPT_INDUSTRY || from_type == SPT_TOWN);
 	EnforcePrecondition(false, to_type == SPT_INDUSTRY || to_type == SPT_TOWN);
@@ -46,27 +47,25 @@
 {
 	if (!IsAwarded(subsidy_id)) return ScriptCompany::COMPANY_INVALID;
 
-	return (ScriptCompany::CompanyID)((byte)::Subsidy::Get(subsidy_id)->awarded);
+	return (ScriptCompany::CompanyID)((uint8_t)::Subsidy::Get(subsidy_id)->awarded);
 }
 
 /* static */ ScriptDate::Date ScriptSubsidy::GetExpireDate(SubsidyID subsidy_id)
 {
 	if (!IsValidSubsidy(subsidy_id)) return ScriptDate::DATE_INVALID;
 
-	int year = ScriptDate::GetYear(ScriptDate::GetCurrentDate());
-	int month = ScriptDate::GetMonth(ScriptDate::GetCurrentDate());
+	TimerGameEconomy::YearMonthDay ymd = TimerGameEconomy::ConvertDateToYMD(TimerGameEconomy::date);
+	ymd.day = 1;
+	auto m = ymd.month + ::Subsidy::Get(subsidy_id)->remaining;
+	ymd.month = (m - 1) % 12 + 1;
+	ymd.year += (m - 1) / 12;
 
-	month += ::Subsidy::Get(subsidy_id)->remaining;
-
-	year += (month - 1) / 12;
-	month = ((month - 1) % 12) + 1;
-
-	return ScriptDate::GetDate(year, month, 1);
+	return (ScriptDate::Date)TimerGameEconomy::ConvertYMDToDate(ymd.year, ymd.month, ymd.day).base();
 }
 
 /* static */ CargoID ScriptSubsidy::GetCargoType(SubsidyID subsidy_id)
 {
-	if (!IsValidSubsidy(subsidy_id)) return CT_INVALID;
+	if (!IsValidSubsidy(subsidy_id)) return INVALID_CARGO;
 
 	return ::Subsidy::Get(subsidy_id)->cargo_type;
 }
@@ -78,9 +77,9 @@
 	return (SubsidyParticipantType)(uint)::Subsidy::Get(subsidy_id)->src_type;
 }
 
-/* static */ int32 ScriptSubsidy::GetSourceIndex(SubsidyID subsidy_id)
+/* static */ SQInteger ScriptSubsidy::GetSourceIndex(SubsidyID subsidy_id)
 {
-	if (!IsValidSubsidy(subsidy_id)) return INVALID_STATION;
+	if (!IsValidSubsidy(subsidy_id)) return INVALID_SOURCE;
 
 	return ::Subsidy::Get(subsidy_id)->src;
 }
@@ -92,9 +91,9 @@
 	return (SubsidyParticipantType)(uint)::Subsidy::Get(subsidy_id)->dst_type;
 }
 
-/* static */ int32 ScriptSubsidy::GetDestinationIndex(SubsidyID subsidy_id)
+/* static */ SQInteger ScriptSubsidy::GetDestinationIndex(SubsidyID subsidy_id)
 {
-	if (!IsValidSubsidy(subsidy_id)) return INVALID_STATION;
+	if (!IsValidSubsidy(subsidy_id)) return INVALID_SOURCE;
 
 	return ::Subsidy::Get(subsidy_id)->dst;
 }

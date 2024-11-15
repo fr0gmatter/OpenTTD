@@ -11,21 +11,35 @@
 
 #include "animated_tile_func.h"
 #include "core/random_func.hpp"
-#include "date_func.h"
+#include "timer/timer_game_tick.h"
 #include "viewport_func.h"
 #include "newgrf_animation_type.h"
 #include "newgrf_callbacks.h"
 #include "tile_map.h"
 
+template <typename Tobj>
+struct TileAnimationFrameAnimationHelper {
+	static uint8_t Get(Tobj *, TileIndex tile) { return GetAnimationFrame(tile); }
+	static bool Set(Tobj *, TileIndex tile, uint8_t frame)
+	{
+		uint8_t prev_frame = GetAnimationFrame(tile);
+		if (prev_frame == frame) return false;
+
+		SetAnimationFrame(tile, frame);
+		return true;
+	}
+};
+
 /**
  * Helper class for a unified approach to NewGRF animation.
- * @tparam Tbase       Instantiation of this class.
- * @tparam Tspec       NewGRF specification related to the animated tile.
- * @tparam Tobj        Object related to the animated tile.
- * @tparam Textra      Custom extra callback data.
- * @tparam GetCallback The callback function pointer.
+ * @tparam Tbase        Instantiation of this class.
+ * @tparam Tspec        NewGRF specification related to the animated tile.
+ * @tparam Tobj         Object related to the animated tile.
+ * @tparam Textra       Custom extra callback data.
+ * @tparam GetCallback  The callback function pointer.
+ * @tparam Tframehelper The animation frame get/set helper.
  */
-template <typename Tbase, typename Tspec, typename Tobj, typename Textra, uint16 (*GetCallback)(CallbackID callback, uint32 param1, uint32 param2, const Tspec *statspec, Tobj *st, TileIndex tile, Textra extra_data)>
+template <typename Tbase, typename Tspec, typename Tobj, typename Textra, uint16_t (*GetCallback)(CallbackID callback, uint32_t param1, uint32_t param2, const Tspec *statspec, Tobj *st, TileIndex tile, Textra extra_data), typename Tframehelper>
 struct AnimationBase {
 	/**
 	 * Animate a single tile.
@@ -40,9 +54,9 @@ struct AnimationBase {
 		assert(spec != nullptr);
 
 		/* Acquire the animation speed from the NewGRF. */
-		uint8 animation_speed = spec->animation.speed;
+		uint8_t animation_speed = spec->animation.speed;
 		if (HasBit(spec->callback_mask, Tbase::cbm_animation_speed)) {
-			uint16 callback = GetCallback(Tbase::cb_animation_speed, 0, 0, spec, obj, tile, extra_data);
+			uint16_t callback = GetCallback(Tbase::cb_animation_speed, 0, 0, spec, obj, tile, extra_data);
 			if (callback != CALLBACK_FAILED) {
 				if (callback >= 0x100 && spec->grf_prop.grffile->grf_version >= 8) ErrorUnknownCallbackResult(spec->grf_prop.grffile->grfid, Tbase::cb_animation_speed, callback);
 				animation_speed = Clamp(callback & 0xFF, 0, 16);
@@ -53,15 +67,15 @@ struct AnimationBase {
 		 * increasing this value by one doubles the wait. 0 is the minimum value
 		 * allowed for animation_speed, which corresponds to 30ms, and 16 is the
 		 * maximum, corresponding to around 33 minutes. */
-		if (_tick_counter % (1ULL << animation_speed) != 0) return;
+		if (TimerGameTick::counter % (1ULL << animation_speed) != 0) return;
 
-		uint8 frame      = GetAnimationFrame(tile);
-		uint8 num_frames = spec->animation.frames;
+		uint8_t frame      = Tframehelper::Get(obj, tile);
+		uint8_t num_frames = spec->animation.frames;
 
 		bool frame_set_by_callback = false;
 
 		if (HasBit(spec->callback_mask, Tbase::cbm_animation_next_frame)) {
-			uint16 callback = GetCallback(Tbase::cb_animation_next_frame, random_animation ? Random() : 0, 0, spec, obj, tile, extra_data);
+			uint16_t callback = GetCallback(Tbase::cb_animation_next_frame, random_animation ? Random() : 0, 0, spec, obj, tile, extra_data);
 
 			if (callback != CALLBACK_FAILED) {
 				frame_set_by_callback = true;
@@ -98,8 +112,8 @@ struct AnimationBase {
 			}
 		}
 
-		SetAnimationFrame(tile, frame);
-		MarkTileDirtyByTile(tile);
+		bool changed = Tframehelper::Set(obj, tile, frame);
+		if (changed) MarkTileDirtyByTile(tile);
 	}
 
 	/**
@@ -114,18 +128,18 @@ struct AnimationBase {
 	 * @param trigger     What triggered this update? To be passed as parameter to the NewGRF.
 	 * @param extra_data  Custom extra data for callback processing.
 	 */
-	static void ChangeAnimationFrame(CallbackID cb, const Tspec *spec, Tobj *obj, TileIndex tile, uint32 random_bits, uint32 trigger, Textra extra_data = 0)
+	static void ChangeAnimationFrame(CallbackID cb, const Tspec *spec, Tobj *obj, TileIndex tile, uint32_t random_bits, uint32_t trigger, Textra extra_data = 0)
 	{
-		uint16 callback = GetCallback(cb, random_bits, trigger, spec, obj, tile, extra_data);
+		uint16_t callback = GetCallback(cb, random_bits, trigger, spec, obj, tile, extra_data);
 		if (callback == CALLBACK_FAILED) return;
 
 		switch (callback & 0xFF) {
 			case 0xFD: /* Do nothing. */         break;
-			case 0xFE: AddAnimatedTile(tile);    break;
+			case 0xFE: AddAnimatedTile(tile, false); break;
 			case 0xFF: DeleteAnimatedTile(tile); break;
 			default:
-				SetAnimationFrame(tile, callback);
-				AddAnimatedTile(tile);
+				bool changed = Tframehelper::Set(obj, tile, callback);
+				AddAnimatedTile(tile, changed);
 				break;
 		}
 

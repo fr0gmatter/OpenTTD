@@ -24,7 +24,8 @@ void ResetOldWaypoints();
 void MoveBuoysToWaypoints();
 void MoveWaypointsToBaseStations();
 
-void AfterLoadVehicles(bool part_of_load);
+void AfterLoadVehiclesPhase1(bool part_of_load);
+void AfterLoadVehiclesPhase2(bool part_of_load);
 void FixupTrainLengths();
 void AfterLoadStations();
 void AfterLoadRoadStops();
@@ -47,15 +48,15 @@ void ResetTempEngineData();
 Engine *GetTempDataEngine(EngineID index);
 void CopyTempEngineData();
 
-extern int32 _saved_scrollpos_x;
-extern int32 _saved_scrollpos_y;
+extern int32_t _saved_scrollpos_x;
+extern int32_t _saved_scrollpos_y;
 extern ZoomLevel _saved_scrollpos_zoom;
 
 extern SavegameType _savegame_type;
-extern uint32 _ttdp_version;
+extern uint32_t _ttdp_version;
 
-CompanyManagerFace ConvertFromOldCompanyManagerFace(uint32 face);
+CompanyManagerFace ConvertFromOldCompanyManagerFace(uint32_t face);
 
-Order UnpackOldOrder(uint16 packed);
+Order UnpackOldOrder(uint16_t packed);
 
 #endif /* SAVELOAD_INTERNAL_H */

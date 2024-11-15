@@ -15,7 +15,6 @@
 #include "industry.h"
 #include "town.h"
 #include "core/overflowsafe_type.hpp"
-#include <map>
 
 struct Station;
 
@@ -27,7 +26,7 @@ struct Station;
  * - bits 19-23 Cargo type.
  * - bits 24-31 %Company number.
  */
-typedef uint32 CargoMonitorID; ///< Type of the cargo monitor number.
+typedef uint32_t CargoMonitorID; ///< Type of the cargo monitor number.
 
 /** Map type for storing and updating active cargo monitor numbers and their amounts. */
 typedef std::map<CargoMonitorID, OverflowSafeInt32> CargoMonitorMap;
@@ -36,17 +35,14 @@ extern CargoMonitorMap _cargo_pickups;
 extern CargoMonitorMap _cargo_deliveries;
 
 
-/** Constants for encoding and extracting cargo monitors. */
-enum CargoCompanyBits {
-	CCB_TOWN_IND_NUMBER_START  = 0,  ///< Start bit of the town or industry number.
-	CCB_TOWN_IND_NUMBER_LENGTH = 16, ///< Number of bits of the town or industry number.
-	CCB_IS_INDUSTRY_BIT        = 16, ///< Bit indicating the town/industry number is an industry.
-	CCB_IS_INDUSTRY_BIT_VALUE  = 1ul << CCB_IS_INDUSTRY_BIT, ///< Value of the #CCB_IS_INDUSTRY_BIT bit.
-	CCB_CARGO_TYPE_START       = 19, ///< Start bit of the cargo type field.
-	CCB_CARGO_TYPE_LENGTH      = 6,  ///< Number of bits of the cargo type field.
-	CCB_COMPANY_START          = 25, ///< Start bit of the company field.
-	CCB_COMPANY_LENGTH         = 4,  ///< Number of bits of the company field.
-};
+/* Constants for encoding and extracting cargo monitors. */
+constexpr uint8_t CCB_TOWN_IND_NUMBER_START = 0; ///< Start bit of the town or industry number.
+constexpr uint8_t CCB_TOWN_IND_NUMBER_LENGTH = 16; ///< Number of bits of the town or industry number.
+constexpr uint8_t CCB_IS_INDUSTRY_BIT = 16; ///< Bit indicating the town/industry number is an industry.
+constexpr uint8_t CCB_CARGO_TYPE_START = 19; ///< Start bit of the cargo type field.
+constexpr uint8_t CCB_CARGO_TYPE_LENGTH = 6; ///< Number of bits of the cargo type field.
+constexpr uint8_t CCB_COMPANY_START = 25; ///< Start bit of the company field.
+constexpr uint8_t CCB_COMPANY_LENGTH = 4; ///< Number of bits of the company field.
 
 static_assert(NUM_CARGO     <= (1 << CCB_CARGO_TYPE_LENGTH));
 static_assert(MAX_COMPANIES <= (1 << CCB_COMPANY_LENGTH));
@@ -59,12 +55,12 @@ static_assert(MAX_COMPANIES <= (1 << CCB_COMPANY_LENGTH));
  * @param ind %Industry providing or accepting the cargo.
  * @return The encoded cargo/company/industry number.
  */
-static inline CargoMonitorID EncodeCargoIndustryMonitor(CompanyID company, CargoID ctype, IndustryID ind)
+inline CargoMonitorID EncodeCargoIndustryMonitor(CompanyID company, CargoID ctype, IndustryID ind)
 {
 	assert(ctype < (1 << CCB_CARGO_TYPE_LENGTH));
 	assert(company < (1 << CCB_COMPANY_LENGTH));
 
-	uint32 ret = 0;
+	uint32_t ret = 0;
 	SB(ret, CCB_TOWN_IND_NUMBER_START, CCB_TOWN_IND_NUMBER_LENGTH, ind);
 	SetBit(ret, CCB_IS_INDUSTRY_BIT);
 	SB(ret, CCB_CARGO_TYPE_START, CCB_CARGO_TYPE_LENGTH, ctype);
@@ -79,12 +75,12 @@ static inline CargoMonitorID EncodeCargoIndustryMonitor(CompanyID company, Cargo
  * @param town %Town providing or accepting the cargo.
  * @return The encoded cargo/company/town number.
  */
-static inline CargoMonitorID EncodeCargoTownMonitor(CompanyID company, CargoID ctype, TownID town)
+inline CargoMonitorID EncodeCargoTownMonitor(CompanyID company, CargoID ctype, TownID town)
 {
 	assert(ctype < (1 << CCB_CARGO_TYPE_LENGTH));
 	assert(company < (1 << CCB_COMPANY_LENGTH));
 
-	uint32 ret = 0;
+	uint32_t ret = 0;
 	SB(ret, CCB_TOWN_IND_NUMBER_START, CCB_TOWN_IND_NUMBER_LENGTH, town);
 	SB(ret, CCB_CARGO_TYPE_START, CCB_CARGO_TYPE_LENGTH, ctype);
 	SB(ret, CCB_COMPANY_START, CCB_COMPANY_LENGTH, company);
@@ -96,7 +92,7 @@ static inline CargoMonitorID EncodeCargoTownMonitor(CompanyID company, CargoID c
  * @param num Cargo monitoring number to decode.
  * @return The extracted company id.
  */
-static inline CompanyID DecodeMonitorCompany(CargoMonitorID num)
+inline CompanyID DecodeMonitorCompany(CargoMonitorID num)
 {
 	return static_cast<CompanyID>(GB(num, CCB_COMPANY_START, CCB_COMPANY_LENGTH));
 }
@@ -106,7 +102,7 @@ static inline CompanyID DecodeMonitorCompany(CargoMonitorID num)
  * @param num Cargo monitoring number to decode.
  * @return The extracted cargo type.
  */
-static inline CargoID DecodeMonitorCargoType(CargoMonitorID num)
+inline CargoID DecodeMonitorCargoType(CargoMonitorID num)
 {
 	return GB(num, CCB_CARGO_TYPE_START, CCB_CARGO_TYPE_LENGTH);
 }
@@ -116,7 +112,7 @@ static inline CargoID DecodeMonitorCargoType(CargoMonitorID num)
  * @param num Cargo monitoring number to decode.
  * @return true if monitoring an industry, false if monitoring a town.
  */
-static inline bool MonitorMonitorsIndustry(CargoMonitorID num)
+inline bool MonitorMonitorsIndustry(CargoMonitorID num)
 {
 	return HasBit(num, CCB_IS_INDUSTRY_BIT);
 }
@@ -126,7 +122,7 @@ static inline bool MonitorMonitorsIndustry(CargoMonitorID num)
  * @param num Cargo monitoring number to decode.
  * @return The extracted industry id, or #INVALID_INDUSTRY if the number does not monitor an industry.
  */
-static inline IndustryID DecodeMonitorIndustry(CargoMonitorID num)
+inline IndustryID DecodeMonitorIndustry(CargoMonitorID num)
 {
 	if (!MonitorMonitorsIndustry(num)) return INVALID_INDUSTRY;
 	return GB(num, CCB_TOWN_IND_NUMBER_START, CCB_TOWN_IND_NUMBER_LENGTH);
@@ -137,7 +133,7 @@ static inline IndustryID DecodeMonitorIndustry(CargoMonitorID num)
  * @param num Cargo monitoring number to decode.
  * @return The extracted town id, or #INVALID_TOWN if the number does not monitor a town.
  */
-static inline TownID DecodeMonitorTown(CargoMonitorID num)
+inline TownID DecodeMonitorTown(CargoMonitorID num)
 {
 	if (MonitorMonitorsIndustry(num)) return INVALID_TOWN;
 	return GB(num, CCB_TOWN_IND_NUMBER_START, CCB_TOWN_IND_NUMBER_LENGTH);
@@ -145,8 +141,8 @@ static inline TownID DecodeMonitorTown(CargoMonitorID num)
 
 void ClearCargoPickupMonitoring(CompanyID company = INVALID_OWNER);
 void ClearCargoDeliveryMonitoring(CompanyID company = INVALID_OWNER);
-int32 GetDeliveryAmount(CargoMonitorID monitor, bool keep_monitoring);
-int32 GetPickupAmount(CargoMonitorID monitor, bool keep_monitoring);
-void AddCargoDelivery(CargoID cargo_type, CompanyID company, uint32 amount, SourceType src_type, SourceID src, const Station *st, IndustryID dest = INVALID_INDUSTRY);
+int32_t GetDeliveryAmount(CargoMonitorID monitor, bool keep_monitoring);
+int32_t GetPickupAmount(CargoMonitorID monitor, bool keep_monitoring);
+void AddCargoDelivery(CargoID cargo_type, CompanyID company, uint32_t amount, SourceType src_type, SourceID src, const Station *st, IndustryID dest = INVALID_INDUSTRY);
 
 #endif /* CARGOMONITOR_H */

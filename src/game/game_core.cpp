@@ -43,7 +43,7 @@
 
 	Game::frame_counter++;
 
-	Backup<CompanyID> cur_company(_current_company, FILE_LINE);
+	Backup<CompanyID> cur_company(_current_company);
 	cur_company.Change(OWNER_DEITY);
 	Game::instance->GameLoop();
 	cur_company.Restore();
@@ -85,7 +85,7 @@
 
 	config->AnchorUnchangeableSettings();
 
-	Backup<CompanyID> cur_company(_current_company, FILE_LINE);
+	Backup<CompanyID> cur_company(_current_company);
 	cur_company.Change(OWNER_DEITY);
 
 	Game::info = info;
@@ -96,12 +96,12 @@
 
 	cur_company.Restore();
 
-	InvalidateWindowData(WC_AI_DEBUG, 0, -1);
+	InvalidateWindowClassesData(WC_SCRIPT_DEBUG, -1);
 }
 
 /* static */ void Game::Uninitialize(bool keepConfig)
 {
-	Backup<CompanyID> cur_company(_current_company, FILE_LINE);
+	Backup<CompanyID> cur_company(_current_company);
 
 	delete Game::instance;
 	Game::instance = nullptr;
@@ -145,27 +145,22 @@
 
 /* static */ void Game::NewEvent(ScriptEvent *event)
 {
-	/* AddRef() and Release() need to be called at least once, so do it here */
-	event->AddRef();
+	ScriptObjectRef counter(event);
 
 	/* Clients should ignore events */
 	if (_networking && !_network_server) {
-		event->Release();
 		return;
 	}
 
 	/* Check if Game instance is alive */
 	if (Game::instance == nullptr) {
-		event->Release();
 		return;
 	}
 
 	/* Queue the event */
-	Backup<CompanyID> cur_company(_current_company, OWNER_DEITY, FILE_LINE);
+	Backup<CompanyID> cur_company(_current_company, OWNER_DEITY);
 	Game::instance->InsertEvent(event);
 	cur_company.Restore();
-
-	event->Release();
 }
 
 /* static */ void Game::ResetConfig()
@@ -175,7 +170,7 @@
 	if (_settings_game.game_config != nullptr && _settings_game.game_config->HasScript()) {
 		if (!_settings_game.game_config->ResetInfo(true)) {
 			Debug(script, 0, "After a reload, the GameScript by the name '{}' was no longer found, and removed from the list.", _settings_game.game_config->GetName());
-			_settings_game.game_config->Change(nullptr);
+			_settings_game.game_config->Change(std::nullopt);
 			if (Game::instance != nullptr) {
 				delete Game::instance;
 				Game::instance = nullptr;
@@ -188,7 +183,7 @@
 	if (_settings_newgame.game_config != nullptr && _settings_newgame.game_config->HasScript()) {
 		if (!_settings_newgame.game_config->ResetInfo(false)) {
 			Debug(script, 0, "After a reload, the GameScript by the name '{}' was no longer found, and removed from the list.", _settings_newgame.game_config->GetName());
-			_settings_newgame.game_config->Change(nullptr);
+			_settings_newgame.game_config->Change(std::nullopt);
 		}
 	}
 }
@@ -201,9 +196,9 @@
 	Game::scanner_library->RescanDir();
 	ResetConfig();
 
-	InvalidateWindowData(WC_AI_LIST, 0, 1);
-	SetWindowClassesDirty(WC_AI_DEBUG);
-	InvalidateWindowClassesData(WC_AI_SETTINGS);
+	InvalidateWindowData(WC_SCRIPT_LIST, 0, 1);
+	SetWindowClassesDirty(WC_SCRIPT_DEBUG);
+	InvalidateWindowClassesData(WC_SCRIPT_SETTINGS);
 	InvalidateWindowClassesData(WC_GAME_OPTIONS);
 }
 
@@ -211,7 +206,7 @@
 /* static */ void Game::Save()
 {
 	if (Game::instance != nullptr && (!_networking || _network_server)) {
-		Backup<CompanyID> cur_company(_current_company, OWNER_DEITY, FILE_LINE);
+		Backup<CompanyID> cur_company(_current_company, OWNER_DEITY);
 		Game::instance->Save();
 		cur_company.Restore();
 	} else {
@@ -219,14 +214,14 @@
 	}
 }
 
-/* static */ std::string Game::GetConsoleList(bool newest_only)
+/* static */ void Game::GetConsoleList(std::back_insert_iterator<std::string> &output_iterator, bool newest_only)
 {
-	return Game::scanner_info->GetConsoleList(newest_only);
+	Game::scanner_info->GetConsoleList(output_iterator, newest_only);
 }
 
-/* static */ std::string Game::GetConsoleLibraryList()
+/* static */ void Game::GetConsoleLibraryList(std::back_insert_iterator<std::string> &output_iterator)
 {
-	 return Game::scanner_library->GetConsoleList(true);
+	Game::scanner_library->GetConsoleList(output_iterator, true);
 }
 
 /* static */ const ScriptInfoList *Game::GetInfoList()
@@ -239,12 +234,12 @@
 	return Game::scanner_info->GetUniqueInfoList();
 }
 
-/* static */ GameInfo *Game::FindInfo(const char *name, int version, bool force_exact_match)
+/* static */ GameInfo *Game::FindInfo(const std::string &name, int version, bool force_exact_match)
 {
 	return Game::scanner_info->FindInfo(name, version, force_exact_match);
 }
 
-/* static */ GameLibrary *Game::FindLibrary(const char *library, int version)
+/* static */ GameLibrary *Game::FindLibrary(const std::string &library, int version)
 {
 	return Game::scanner_library->FindLibrary(library, version);
 }

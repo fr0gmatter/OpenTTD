@@ -19,42 +19,25 @@
 #include "game_info.hpp"
 
 #include "table/strings.h"
-
-#include <stdarg.h>
-#include <memory>
+#include "table/strgen_tables.h"
 
 #include "../safeguards.h"
 
-void CDECL strgen_warning(const char *s, ...)
+void CDECL StrgenWarningI(const std::string &msg)
 {
-	char buf[1024];
-	va_list va;
-	va_start(va, s);
-	vseprintf(buf, lastof(buf), s, va);
-	va_end(va);
-	Debug(script, 0, "{}:{}: warning: {}", _file, _cur_line, buf);
+	Debug(script, 0, "{}:{}: warning: {}", _file, _cur_line, msg);
 	_warnings++;
 }
 
-void CDECL strgen_error(const char *s, ...)
+void CDECL StrgenErrorI(const std::string &msg)
 {
-	char buf[1024];
-	va_list va;
-	va_start(va, s);
-	vseprintf(buf, lastof(buf), s, va);
-	va_end(va);
-	Debug(script, 0, "{}:{}: error: {}", _file, _cur_line, buf);
+	Debug(script, 0, "{}:{}: error: {}", _file, _cur_line, msg);
 	_errors++;
 }
 
-void NORETURN CDECL strgen_fatal(const char *s, ...)
+void CDECL StrgenFatalI(const std::string &msg)
 {
-	char buf[1024];
-	va_list va;
-	va_start(va, s);
-	vseprintf(buf, lastof(buf), s, va);
-	va_end(va);
-	Debug(script, 0, "{}:{}: FATAL: {}", _file, _cur_line, buf);
+	Debug(script, 0, "{}:{}: FATAL: {}", _file, _cur_line, msg);
 	throw std::exception();
 }
 
@@ -66,10 +49,8 @@ void NORETURN CDECL strgen_fatal(const char *s, ...)
 LanguageStrings ReadRawLanguageStrings(const std::string &file)
 {
 	size_t to_read;
-	FILE *fh = FioFOpenFile(file, "rb", GAME_DIR, &to_read);
-	if (fh == nullptr) return LanguageStrings();
-
-	FileCloser fhClose(fh);
+	auto fh = FioFOpenFile(file, "rb", GAME_DIR, &to_read);
+	if (!fh.has_value()) return LanguageStrings();
 
 	auto pos = file.rfind(PATHSEPCHAR);
 	if (pos == std::string::npos) return LanguageStrings();
@@ -81,7 +62,7 @@ LanguageStrings ReadRawLanguageStrings(const std::string &file)
 	LanguageStrings ret(langname.substr(0, langname.find('.')));
 
 	char buffer[2048];
-	while (to_read != 0 && fgets(buffer, sizeof(buffer), fh) != nullptr) {
+	while (to_read != 0 && fgets(buffer, sizeof(buffer), *fh) != nullptr) {
 		size_t len = strlen(buffer);
 
 		/* Remove trailing spaces/newlines from the string. */
@@ -119,14 +100,10 @@ struct StringListReader : StringReader {
 	{
 	}
 
-	char *ReadLine(char *buffer, const char *last) override
+	std::optional<std::string> ReadLine() override
 	{
-		if (this->p == this->end) return nullptr;
-
-		strecpy(buffer, this->p->c_str(), last);
-		this->p++;
-
-		return buffer;
+		if (this->p == this->end) return std::nullopt;
+		return *this->p++;
 	}
 };
 
@@ -142,22 +119,22 @@ struct TranslationWriter : LanguageWriter {
 	{
 	}
 
-	void WriteHeader(const LanguagePackHeader *header)
+	void WriteHeader(const LanguagePackHeader *) override
 	{
 		/* We don't use the header. */
 	}
 
-	void Finalise()
+	void Finalise() override
 	{
 		/* Nothing to do. */
 	}
 
-	void WriteLength(uint length)
+	void WriteLength(uint) override
 	{
 		/* We don't write the length. */
 	}
 
-	void Write(const byte *buffer, size_t length)
+	void Write(const uint8_t *buffer, size_t length) override
 	{
 		this->strings.emplace_back((const char *)buffer, length);
 	}
@@ -175,12 +152,12 @@ struct StringNameWriter : HeaderWriter {
 	{
 	}
 
-	void WriteStringID(const char *name, int stringid)
+	void WriteStringID(const std::string &name, int stringid) override
 	{
 		if (stringid == (int)this->strings.size()) this->strings.emplace_back(name);
 	}
 
-	void Finalise(const StringData &data)
+	void Finalise(const StringData &) override
 	{
 		/* Nothing to do. */
 	}
@@ -201,12 +178,12 @@ public:
 	/**
 	 * Scan.
 	 */
-	void Scan(const char *directory)
+	void Scan(const std::string &directory)
 	{
 		this->FileScanner::Scan(".txt", directory, false);
 	}
 
-	bool AddFile(const std::string &filename, size_t basepath_length, const std::string &tar_filename) override
+	bool AddFile(const std::string &filename, size_t, const std::string &) override
 	{
 		if (exclude == filename) return true;
 
@@ -225,6 +202,7 @@ public:
 GameStrings *LoadTranslations()
 {
 	const GameInfo *info = Game::GetInfo();
+	assert(info != nullptr);
 	std::string basename(info->GetMainScript());
 	auto e = basename.rfind(PATHSEPCHAR);
 	if (e == std::string::npos) return nullptr;
@@ -261,7 +239,7 @@ GameStrings *LoadTranslations()
 			}
 		} else {
 			/* Scan filesystem */
-			scanner.Scan(ldir.c_str());
+			scanner.Scan(ldir);
 		}
 
 		gs->Compile();
@@ -269,6 +247,36 @@ GameStrings *LoadTranslations()
 	} catch (...) {
 		delete gs;
 		return nullptr;
+	}
+}
+
+static StringParam::ParamType GetParamType(const CmdStruct *cs)
+{
+	if (cs->value == SCC_RAW_STRING_POINTER) return StringParam::RAW_STRING;
+	if (cs->value == SCC_STRING || cs != TranslateCmdForCompare(cs)) return StringParam::STRING;
+	return StringParam::OTHER;
+}
+
+static void ExtractStringParams(const StringData &data, StringParamsList &params)
+{
+	for (size_t i = 0; i < data.max_strings; i++) {
+		const LangString *ls = data.strings[i].get();
+
+		if (ls != nullptr) {
+			StringParams &param = params.emplace_back();
+			ParsedCommandStruct pcs = ExtractCommandString(ls->english.c_str(), false);
+
+			for (auto it = pcs.consuming_commands.begin(); it != pcs.consuming_commands.end(); it++) {
+				if (*it == nullptr) {
+					/* Skip empty param unless a non empty param exist after it. */
+					if (std::all_of(it, pcs.consuming_commands.end(), [](auto cs) { return cs == nullptr; })) break;
+					param.emplace_back(StringParam::UNUSED, 1, nullptr);
+					continue;
+				}
+				const CmdStruct *cs = *it;
+				param.emplace_back(GetParamType(cs), cs->consumes, cs->cmd);
+			}
+		}
 	}
 }
 
@@ -281,6 +289,8 @@ void GameStrings::Compile()
 	if (_errors != 0) throw std::exception();
 
 	this->version = data.Version();
+
+	ExtractStringParams(data, this->string_params);
 
 	StringNameWriter id_writer(this->string_names);
 	id_writer.WriteHeader(data);
@@ -307,8 +317,36 @@ GameStrings *_current_data = nullptr;
  */
 const char *GetGameStringPtr(uint id)
 {
-	if (id >= _current_data->cur_language->lines.size()) return GetStringPtr(STR_UNDEFINED);
+	if (_current_data == nullptr || _current_data->cur_language == nullptr || id >= _current_data->cur_language->lines.size()) return GetStringPtr(STR_UNDEFINED);
 	return _current_data->cur_language->lines[id].c_str();
+}
+
+/**
+ * Get the string parameters of a particular game string.
+ * @param id The ID of the game string.
+ * @return The string parameters.
+ */
+const StringParams &GetGameStringParams(uint id)
+{
+	/* An empty result for STR_UNDEFINED. */
+	static StringParams empty;
+
+	if (id >= _current_data->string_params.size()) return empty;
+	return _current_data->string_params[id];
+}
+
+/**
+ * Get the name of a particular game string.
+ * @param id The ID of the game string.
+ * @return The name of the string.
+ */
+const std::string &GetGameStringName(uint id)
+{
+	/* The name for STR_UNDEFINED. */
+	static const std::string undefined = "STR_UNDEFINED";
+
+	if (id >= _current_data->string_names.size()) return undefined;
+	return _current_data->string_names[id];
 }
 
 /**
@@ -328,7 +366,7 @@ void RegisterGameTranslation(Squirrel *engine)
 
 	int idx = 0;
 	for (const auto &p : _current_data->string_names) {
-		sq_pushstring(vm, p.c_str(), -1);
+		sq_pushstring(vm, p, -1);
 		sq_pushinteger(vm, idx);
 		sq_rawset(vm, -3);
 		idx++;
@@ -346,19 +384,7 @@ void ReconsiderGameScriptLanguage()
 {
 	if (_current_data == nullptr) return;
 
-	char temp[MAX_PATH];
-	strecpy(temp, _current_language->file, lastof(temp));
-
-	/* Remove the extension */
-	char *l = strrchr(temp, '.');
-	assert(l != nullptr);
-	*l = '\0';
-
-	/* Skip the path */
-	char *language = strrchr(temp, PATHSEPCHAR);
-	assert(language != nullptr);
-	language++;
-
+	std::string language = FS2OTTD(_current_language->file.stem());
 	for (auto &p : _current_data->compiled_strings) {
 		if (p.language == language) {
 			_current_data->cur_language = &p;

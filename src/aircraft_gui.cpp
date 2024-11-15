@@ -34,11 +34,11 @@ void DrawAircraftDetails(const Aircraft *v, const Rect &r)
 	int y = r.top;
 	for (const Aircraft *u = v; u != nullptr; u = u->Next()) {
 		if (u->IsNormalAircraft()) {
-			SetDParam(0, u->engine_type);
+			SetDParam(0, PackEngineNameDParam(u->engine_type, EngineNameContext::VehicleDetails));
 			SetDParam(1, u->build_year);
 			SetDParam(2, u->value);
 			DrawString(r.left, r.right, y, STR_VEHICLE_INFO_BUILT_VALUE);
-			y += FONT_HEIGHT_NORMAL;
+			y += GetCharacterHeight(FS_NORMAL);
 
 			SetDParam(0, u->cargo_type);
 			SetDParam(1, u->cargo_cap);
@@ -46,7 +46,7 @@ void DrawAircraftDetails(const Aircraft *v, const Rect &r)
 			SetDParam(3, u->Next()->cargo_cap);
 			SetDParam(4, GetCargoSubtypeText(u));
 			DrawString(r.left, r.right, y, (u->Next()->cargo_cap != 0) ? STR_VEHICLE_INFO_CAPACITY_CAPACITY : STR_VEHICLE_INFO_CAPACITY);
-			y += FONT_HEIGHT_NORMAL + WidgetDimensions::scaled.vsep_normal;
+			y += GetCharacterHeight(FS_NORMAL) + WidgetDimensions::scaled.vsep_normal;
 		}
 
 		if (u->cargo_cap != 0) {
@@ -56,10 +56,10 @@ void DrawAircraftDetails(const Aircraft *v, const Rect &r)
 				/* Cargo names (fix pluralness) */
 				SetDParam(0, u->cargo_type);
 				SetDParam(1, cargo_count);
-				SetDParam(2, u->cargo.Source());
+				SetDParam(2, u->cargo.GetFirstStation());
 				DrawString(r.left, r.right, y, STR_VEHICLE_DETAILS_CARGO_FROM);
-				y += FONT_HEIGHT_NORMAL;
-				feeder_share += u->cargo.FeederShare();
+				y += GetCharacterHeight(FS_NORMAL);
+				feeder_share += u->cargo.GetFeederShare();
 			}
 		}
 	}
@@ -97,6 +97,17 @@ void DrawAircraftImage(const Vehicle *v, const Rect &r, VehicleID selection, Eng
 
 	PaletteID pal = (v->vehstatus & VS_CRASHED) ? PALETTE_CRASH : GetVehiclePalette(v);
 	seq.Draw(x, y, pal, (v->vehstatus & VS_CRASHED) != 0);
+
+	/* Aircraft can store cargo in their shadow, show this if present. */
+	const Vehicle *u = v->Next();
+	assert(u != nullptr);
+	int dx = 0;
+	if (u->cargo_cap > 0 && u->cargo_type != v->cargo_type) {
+		dx = GetLargestCargoIconSize().width / 2;
+		DrawCargoIconOverlay(x + dx, y, u->cargo_type);
+	}
+	if (v->cargo_cap > 0) DrawCargoIconOverlay(x - dx, y, v->cargo_type);
+
 	if (helicopter) {
 		const Aircraft *a = Aircraft::From(v);
 		VehicleSpriteSeq rotor_seq;

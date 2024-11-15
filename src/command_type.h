@@ -13,7 +13,6 @@
 #include "economy_type.h"
 #include "strings_type.h"
 #include "tile_type.h"
-#include <vector>
 
 struct GRFFile;
 
@@ -22,14 +21,15 @@ struct GRFFile;
  * a possible error message/state together.
  */
 class CommandCost {
-	ExpensesType expense_type; ///< the type of expence as shown on the finances view
-	Money cost;       ///< The cost of this action
-	StringID message; ///< Warning message for when success is unset
-	bool success;     ///< Whether the comment went fine up to this moment
-	const GRFFile *textref_stack_grffile; ///< NewGRF providing the #TextRefStack content.
-	uint textref_stack_size;   ///< Number of uint32 values to put on the #TextRefStack for the error message.
+	ExpensesType expense_type;                  ///< the type of expence as shown on the finances view
+	Money cost;                                 ///< The cost of this action
+	StringID message;                           ///< Warning message for when success is unset
+	bool success;                               ///< Whether the command went fine up to this moment
+	const GRFFile *textref_stack_grffile;       ///< NewGRF providing the #TextRefStack content.
+	uint textref_stack_size;                    ///< Number of uint32_t values to put on the #TextRefStack for the error message.
+	StringID extra_message = INVALID_STRING_ID; ///< Additional warning message for when success is unset
 
-	static uint32 textref_stack[16];
+	static uint32_t textref_stack[16];
 
 public:
 	/**
@@ -38,9 +38,9 @@ public:
 	CommandCost() : expense_type(INVALID_EXPENSES), cost(0), message(INVALID_STRING_ID), success(true), textref_stack_grffile(nullptr), textref_stack_size(0) {}
 
 	/**
-	 * Creates a command return value the is failed with the given message
+	 * Creates a command return value with one, or optionally two, error message strings.
 	 */
-	explicit CommandCost(StringID msg) : expense_type(INVALID_EXPENSES), cost(0), message(msg), success(false), textref_stack_grffile(nullptr), textref_stack_size(0) {}
+	explicit CommandCost(StringID msg, StringID extra_msg = INVALID_STRING_ID) : expense_type(INVALID_EXPENSES), cost(0), message(msg), success(false), textref_stack_grffile(nullptr), textref_stack_size(0), extra_message(extra_msg) {}
 
 	/**
 	 * Creates a command cost with given expense type and start cost of 0
@@ -98,11 +98,12 @@ public:
 	 * Makes this #CommandCost behave like an error command.
 	 * @param message The error message.
 	 */
-	void MakeError(StringID message)
+	void MakeError(StringID message, StringID extra_message = INVALID_STRING_ID)
 	{
 		assert(message != INVALID_STRING_ID);
 		this->success = false;
 		this->message = message;
+		this->extra_message = extra_message;
 	}
 
 	void UseTextRefStack(const GRFFile *grffile, uint num_registers);
@@ -117,8 +118,8 @@ public:
 	}
 
 	/**
-	 * Returns the number of uint32 values for the #TextRefStack of the error message.
-	 * @return number of uint32 values.
+	 * Returns the number of uint32_t values for the #TextRefStack of the error message.
+	 * @return number of uint32_t values.
 	 */
 	uint GetTextRefStackSize() const
 	{
@@ -127,9 +128,9 @@ public:
 
 	/**
 	 * Returns a pointer to the values for the #TextRefStack of the error message.
-	 * @return uint32 values for the #TextRefStack
+	 * @return uint32_t values for the #TextRefStack
 	 */
-	const uint32 *GetTextRefStack() const
+	const uint32_t *GetTextRefStack() const
 	{
 		return textref_stack;
 	}
@@ -142,6 +143,16 @@ public:
 	{
 		if (this->success) return INVALID_STRING_ID;
 		return this->message;
+	}
+
+	/**
+	 * Returns the extra error message of a command
+	 * @return the extra error message, if succeeded #INVALID_STRING_ID
+	 */
+	StringID GetExtraErrorMessage() const
+	{
+		if (this->success) return INVALID_STRING_ID;
+		return this->extra_message;
 	}
 
 	/**
@@ -173,7 +184,7 @@ public:
  *
  * @see _command_proc_table
  */
-enum Commands : uint16 {
+enum Commands : uint16_t {
 	CMD_BUILD_RAILROAD_TRACK,         ///< build a rail track
 	CMD_REMOVE_RAILROAD_TRACK,        ///< remove a rail track
 	CMD_BUILD_SINGLE_RAIL,            ///< build a single rail track
@@ -182,8 +193,8 @@ enum Commands : uint16 {
 	CMD_BUILD_BRIDGE,                 ///< build a bridge
 	CMD_BUILD_RAIL_STATION,           ///< build a rail station
 	CMD_BUILD_TRAIN_DEPOT,            ///< build a train depot
-	CMD_BUILD_SIGNALS,                ///< build a signal
-	CMD_REMOVE_SIGNALS,               ///< remove a signal
+	CMD_BUILD_SINGLE_SIGNAL,          ///< build a signal
+	CMD_REMOVE_SINGLE_SIGNAL,         ///< remove a signal
 	CMD_TERRAFORM_LAND,               ///< terraform a tile
 	CMD_BUILD_OBJECT,                 ///< build an object
 	CMD_BUILD_OBJECT_AREA,            ///< build an area of objects
@@ -195,6 +206,9 @@ enum Commands : uint16 {
 	CMD_BUILD_RAIL_WAYPOINT,          ///< build a waypoint
 	CMD_RENAME_WAYPOINT,              ///< rename a waypoint
 	CMD_REMOVE_FROM_RAIL_WAYPOINT,    ///< remove a (rectangle of) tiles from a rail waypoint
+
+	CMD_BUILD_ROAD_WAYPOINT,          ///< build a road waypoint
+	CMD_REMOVE_FROM_ROAD_WAYPOINT,    ///< remove a (rectangle of) tiles from a road waypoint
 
 	CMD_BUILD_ROAD_STOP,              ///< build a road stop
 	CMD_REMOVE_ROAD_STOP,             ///< remove a road stop
@@ -232,13 +246,17 @@ enum Commands : uint16 {
 	CMD_CHANGE_SERVICE_INT,           ///< change the server interval of a vehicle
 
 	CMD_BUILD_INDUSTRY,               ///< build a new industry
-	CMD_INDUSTRY_CTRL,                ///< change industry properties
+	CMD_INDUSTRY_SET_FLAGS,           ///< change industry control flags
+	CMD_INDUSTRY_SET_EXCLUSIVITY,     ///< change industry exclusive consumer/supplier
+	CMD_INDUSTRY_SET_TEXT,            ///< change additional text for the industry
+	CMD_INDUSTRY_SET_PRODUCTION,      ///< change industry production
 
 	CMD_SET_COMPANY_MANAGER_FACE,     ///< set the manager's face of the company
 	CMD_SET_COMPANY_COLOUR,           ///< set the colour of the company
 
 	CMD_INCREASE_LOAN,                ///< increase the loan from the bank
 	CMD_DECREASE_LOAN,                ///< decrease the loan from the bank
+	CMD_SET_COMPANY_MAX_LOAN,         ///< sets the max loan for the company
 
 	CMD_WANT_ENGINE_PREVIEW,          ///< confirm the preview of an engine
 	CMD_ENGINE_CTRL,                  ///< control availability of the engine for companies
@@ -257,8 +275,6 @@ enum Commands : uint16 {
 
 	CMD_PAUSE,                        ///< pause the game
 
-	CMD_BUY_SHARE_IN_COMPANY,         ///< buy a share from a company
-	CMD_SELL_SHARE_IN_COMPANY,        ///< sell a share from a company
 	CMD_BUY_COMPANY,                  ///< buy a company which is bankrupt
 
 	CMD_FOUND_TOWN,                   ///< found a town
@@ -270,6 +286,7 @@ enum Commands : uint16 {
 	CMD_TOWN_SET_TEXT,                ///< set the custom text of a town
 	CMD_EXPAND_TOWN,                  ///< expand a town
 	CMD_DELETE_TOWN,                  ///< delete a town
+	CMD_PLACE_HOUSE,                  ///< place a house
 
 	CMD_ORDER_REFIT,                  ///< change the refit information of an order (for "goto depot" )
 	CMD_CLONE_ORDER,                  ///< clone (and share) an order
@@ -281,9 +298,11 @@ enum Commands : uint16 {
 
 	CMD_CREATE_SUBSIDY,               ///< create a new subsidy
 	CMD_COMPANY_CTRL,                 ///< used in multiplayer to create a new companies etc.
+	CMD_COMPANY_ALLOW_LIST_CTRL, ///< Used in multiplayer to add/remove a client's public key to/from the company's allow list.
 	CMD_CUSTOM_NEWS_ITEM,             ///< create a custom news message
 	CMD_CREATE_GOAL,                  ///< create a new goal
 	CMD_REMOVE_GOAL,                  ///< remove a goal
+	CMD_SET_GOAL_DESTINATION,         ///< update goal destination of a goal
 	CMD_SET_GOAL_TEXT,                ///< update goal text of a goal
 	CMD_SET_GOAL_PROGRESS,            ///< update goal progress text of a goal
 	CMD_SET_GOAL_COMPLETED,           ///< update goal completed status of a goal
@@ -386,6 +405,7 @@ enum CommandFlags {
 	CMD_DEITY     = 0x100, ///< the command may be executed by COMPANY_DEITY
 	CMD_STR_CTRL  = 0x200, ///< the command's string may contain control strings
 	CMD_NO_EST    = 0x400, ///< the command is never estimated.
+	CMD_LOCATION  = 0x800, ///< the command has implicit location argument.
 };
 DECLARE_ENUM_AS_BIT_SET(CommandFlags)
 
@@ -393,7 +413,7 @@ DECLARE_ENUM_AS_BIT_SET(CommandFlags)
 enum CommandType {
 	CMDT_LANDSCAPE_CONSTRUCTION, ///< Construction and destruction of objects on the map.
 	CMDT_VEHICLE_CONSTRUCTION,   ///< Construction, modification (incl. refit) and destruction of vehicles.
-	CMDT_MONEY_MANAGEMENT,       ///< Management of money, i.e. loans and shares.
+	CMDT_MONEY_MANAGEMENT,       ///< Management of money, i.e. loans.
 	CMDT_VEHICLE_MANAGEMENT,     ///< Stopping, starting, sending to depot, turning around, replace orders etc.
 	CMDT_ROUTE_MANAGEMENT,       ///< Modifications to route management (orders, groups, etc).
 	CMDT_OTHER_MANAGEMENT,       ///< Renaming stuff, changing company colours, placing signs, etc.
@@ -447,7 +467,7 @@ template <Commands Tcmd> struct CommandTraits;
 	};
 
 /** Storage buffer for serialized command data. */
-typedef std::vector<byte> CommandDataBuffer;
+typedef std::vector<uint8_t> CommandDataBuffer;
 
 /**
  * Define a callback function for the client, after the command is finished.
@@ -477,6 +497,6 @@ typedef void CommandCallback(Commands cmd, const CommandCost &result, TileIndex 
  * @param result_data Additional returned data from the command
  * @see CommandProc
  */
-typedef void CommandCallbackData(Commands cmd, const CommandCost &result, TileIndex tile, const CommandDataBuffer &data, CommandDataBuffer result_data);
+typedef void CommandCallbackData(Commands cmd, const CommandCost &result, const CommandDataBuffer &data, CommandDataBuffer result_data);
 
 #endif /* COMMAND_TYPE_H */

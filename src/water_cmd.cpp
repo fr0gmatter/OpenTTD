@@ -32,13 +32,14 @@
 #include "game/game.hpp"
 #include "core/random_func.hpp"
 #include "core/backup_type.hpp"
-#include "date_func.h"
+#include "timer/timer_game_calendar.h"
 #include "company_base.h"
 #include "company_gui.h"
 #include "newgrf_generic.h"
 #include "industry.h"
 #include "water_cmd.h"
 #include "landscape_cmd.h"
+#include "pathfinder/water_regions.h"
 
 #include "table/strings.h"
 
@@ -47,7 +48,7 @@
 /**
  * Describes from which directions a specific slope can be flooded (if the tile is floodable at all).
  */
-static const uint8 _flood_from_dirs[] = {
+static const uint8_t _flood_from_dirs[] = {
 	(1 << DIR_NW) | (1 << DIR_SW) | (1 << DIR_SE) | (1 << DIR_NE), // SLOPE_FLAT
 	(1 << DIR_NE) | (1 << DIR_SE),                                 // SLOPE_W
 	(1 << DIR_NW) | (1 << DIR_NE),                                 // SLOPE_S
@@ -89,6 +90,17 @@ static void MarkCanalsAndRiversAroundDirty(TileIndex tile)
 	}
 }
 
+/**
+ * Clear non-flooding state of the tiles around a tile.
+ * @param tile The centre of the tile where other tiles' non-flooding state is cleared.
+ */
+void ClearNeighbourNonFloodingStates(TileIndex tile)
+{
+	for (Direction dir = DIR_BEGIN; dir != DIR_END; dir++) {
+		TileIndex dest = tile + TileOffsByDir(dir);
+		if (IsValidTile(dest) && IsTileType(dest, MP_WATER)) SetNonFloodingWaterTile(dest, false);
+	}
+}
 
 /**
  * Build a ship depot.
@@ -100,7 +112,7 @@ static void MarkCanalsAndRiversAroundDirty(TileIndex tile)
 CommandCost CmdBuildShipDepot(DoCommandFlag flags, TileIndex tile, Axis axis)
 {
 	if (!IsValidAxis(axis)) return CMD_ERROR;
-	TileIndex tile2 = tile + (axis == AXIS_X ? TileDiffXY(1, 0) : TileDiffXY(0, 1));
+	TileIndex tile2 = tile + TileOffsByAxis(axis);
 
 	if (!HasTileWaterGround(tile) || !HasTileWaterGround(tile2)) {
 		return_cmd_error(STR_ERROR_MUST_BE_BUILT_ON_WATER);
@@ -134,13 +146,16 @@ CommandCost CmdBuildShipDepot(DoCommandFlag flags, TileIndex tile, Axis axis)
 
 	if (flags & DC_EXEC) {
 		Depot *depot = new Depot(tile);
-		depot->build_date = _date;
+		depot->build_date = TimerGameCalendar::date;
 
-		if (wc1 == WATER_CLASS_CANAL || wc2 == WATER_CLASS_CANAL) {
-			/* Update infrastructure counts after the unconditional clear earlier. */
-			Company::Get(_current_company)->infrastructure.water += wc1 == WATER_CLASS_CANAL && wc2 == WATER_CLASS_CANAL ? 2 : 1;
-		}
-		Company::Get(_current_company)->infrastructure.water += 2 * LOCK_DEPOT_TILE_FACTOR;
+		uint new_water_infra = 2 * LOCK_DEPOT_TILE_FACTOR;
+		/* Update infrastructure counts after the tile clears earlier.
+		 * Clearing object tiles may result in water tiles which are already accounted for in the water infrastructure total.
+		 * See: MakeWaterKeepingClass() */
+		if (wc1 == WATER_CLASS_CANAL && !(HasTileWaterClass(tile) && GetWaterClass(tile) == WATER_CLASS_CANAL && IsTileOwner(tile, _current_company))) new_water_infra++;
+		if (wc2 == WATER_CLASS_CANAL && !(HasTileWaterClass(tile2) && GetWaterClass(tile2) == WATER_CLASS_CANAL && IsTileOwner(tile2, _current_company))) new_water_infra++;
+
+		Company::Get(_current_company)->infrastructure.water += new_water_infra;
 		DirtyCompanyInfrastructureWindows(_current_company);
 
 		MakeShipDepot(tile,  _current_company, depot->index, DEPOT_PART_NORTH, axis, wc1);
@@ -155,13 +170,13 @@ CommandCost CmdBuildShipDepot(DoCommandFlag flags, TileIndex tile, Axis axis)
 	return cost;
 }
 
-bool IsPossibleDockingTile(TileIndex t)
+bool IsPossibleDockingTile(Tile t)
 {
 	assert(IsValidTile(t));
 	switch (GetTileType(t)) {
 		case MP_WATER:
 			if (IsLock(t) && GetLockPart(t) == LOCK_PART_MIDDLE) return false;
-			FALLTHROUGH;
+			[[fallthrough]];
 		case MP_RAILWAY:
 		case MP_STATION:
 		case MP_TUNNELBRIDGE:
@@ -183,7 +198,7 @@ void CheckForDockingTile(TileIndex t)
 		TileIndex tile = t + TileOffsByDiagDir(d);
 		if (!IsValidTile(tile)) continue;
 
-		if (IsDockTile(tile) && IsValidDockingDirectionForDock(tile, d)) {
+		if (IsDockTile(tile) && IsDockWaterPart(tile)) {
 			Station::GetByTile(tile)->docking_station.Add(t);
 			SetDockingTile(t, true);
 		}
@@ -206,8 +221,7 @@ void MakeWaterKeepingClass(TileIndex tile, Owner o)
 	WaterClass wc = GetWaterClass(tile);
 
 	/* Autoslope might turn an originally canal or river tile into land */
-	int z;
-	Slope slope = GetTileSlope(tile, &z);
+	auto [slope, z] = GetTileSlopeZ(tile);
 
 	if (slope != SLOPE_FLAT) {
 		if (wc == WATER_CLASS_CANAL) {
@@ -264,10 +278,12 @@ static CommandCost RemoveShipDepot(TileIndex tile, DoCommandFlag flags)
 
 	/* do not check for ship on tile when company goes bankrupt */
 	if (!(flags & DC_BANKRUPT)) {
-		CommandCost ret = EnsureNoVehicleOnGround(tile);
+		ret = EnsureNoVehicleOnGround(tile);
 		if (ret.Succeeded()) ret = EnsureNoVehicleOnGround(tile2);
 		if (ret.Failed()) return ret;
 	}
+
+	bool do_clear = (flags & DC_FORCE_CLEAR_TILE) != 0;
 
 	if (flags & DC_EXEC) {
 		delete Depot::GetByTile(tile);
@@ -275,10 +291,11 @@ static CommandCost RemoveShipDepot(TileIndex tile, DoCommandFlag flags)
 		Company *c = Company::GetIfValid(GetTileOwner(tile));
 		if (c != nullptr) {
 			c->infrastructure.water -= 2 * LOCK_DEPOT_TILE_FACTOR;
+			if (do_clear && GetWaterClass(tile) == WATER_CLASS_CANAL) c->infrastructure.water--;
 			DirtyCompanyInfrastructureWindows(c->index);
 		}
 
-		MakeWaterKeepingClass(tile,  GetTileOwner(tile));
+		if (!do_clear) MakeWaterKeepingClass(tile,  GetTileOwner(tile));
 		MakeWaterKeepingClass(tile2, GetTileOwner(tile2));
 	}
 
@@ -296,7 +313,7 @@ static CommandCost DoBuildLock(TileIndex tile, DiagDirection dir, DoCommandFlag 
 {
 	CommandCost cost(EXPENSES_CONSTRUCTION);
 
-	int delta = TileOffsByDiagDir(dir);
+	TileIndexDiff delta = TileOffsByDiagDir(dir);
 	CommandCost ret = EnsureNoVehicleOnGround(tile);
 	if (ret.Succeeded()) ret = EnsureNoVehicleOnGround(tile + delta);
 	if (ret.Succeeded()) ret = EnsureNoVehicleOnGround(tile - delta);
@@ -356,6 +373,8 @@ static CommandCost DoBuildLock(TileIndex tile, DiagDirection dir, DoCommandFlag 
 		MarkTileDirtyByTile(tile + delta);
 		MarkCanalsAndRiversAroundDirty(tile - delta);
 		MarkCanalsAndRiversAroundDirty(tile + delta);
+		InvalidateWaterRegion(tile - delta);
+		InvalidateWaterRegion(tile + delta);
 	}
 	cost.AddCost(_price[PR_BUILD_LOCK]);
 
@@ -395,6 +414,7 @@ static CommandCost RemoveLock(TileIndex tile, DoCommandFlag flags)
 			MakeRiver(tile, Random());
 		} else {
 			DoClearSquare(tile);
+			ClearNeighbourNonFloodingStates(tile);
 		}
 		MakeWaterKeepingClass(tile + delta, GetTileOwner(tile + delta));
 		MakeWaterKeepingClass(tile - delta, GetTileOwner(tile - delta));
@@ -421,10 +441,23 @@ CommandCost CmdBuildLock(DoCommandFlag flags, TileIndex tile)
 }
 
 /** Callback to create non-desert around a river tile. */
-bool RiverModifyDesertZone(TileIndex tile, void *)
+static bool RiverModifyDesertZone(TileIndex tile, void *)
 {
 	if (GetTropicZone(tile) == TROPICZONE_DESERT) SetTropicZone(tile, TROPICZONE_NORMAL);
 	return false;
+}
+
+/**
+ * Make a river tile and remove desert directly around it.
+ * @param tile The tile to change into river and create non-desert around
+ */
+void MakeRiverAndModifyDesertZoneAround(TileIndex tile)
+{
+	MakeRiver(tile, Random());
+	MarkTileDirtyByTile(tile);
+
+	/* Remove desert directly around the river tile. */
+	CircularTileSearch(&tile, RIVER_OFFSET_DESERT_DISTANCE, RiverModifyDesertZone, nullptr);
 }
 
 /**
@@ -438,20 +471,14 @@ bool RiverModifyDesertZone(TileIndex tile, void *)
  */
 CommandCost CmdBuildCanal(DoCommandFlag flags, TileIndex tile, TileIndex start_tile, WaterClass wc, bool diagonal)
 {
-	if (start_tile >= MapSize() || !IsValidWaterClass(wc)) return CMD_ERROR;
+	if (start_tile >= Map::Size() || !IsValidWaterClass(wc)) return CMD_ERROR;
 
 	/* Outside of the editor you can only build canals, not oceans */
 	if (wc != WATER_CLASS_CANAL && _game_mode != GM_EDITOR) return CMD_ERROR;
 
 	CommandCost cost(EXPENSES_CONSTRUCTION);
 
-	std::unique_ptr<TileIterator> iter;
-	if (diagonal) {
-		iter = std::make_unique<DiagonalTileIterator>(tile, start_tile);
-	} else {
-		iter = std::make_unique<OrthogonalTileIterator>(tile, start_tile);
-	}
-
+	std::unique_ptr<TileIterator> iter = TileIterator::Create(tile, start_tile, diagonal);
 	for (; *iter != INVALID_TILE; ++(*iter)) {
 		TileIndex current_tile = *iter;
 		CommandCost ret;
@@ -472,6 +499,14 @@ CommandCost CmdBuildCanal(DoCommandFlag flags, TileIndex tile, TileIndex start_t
 		if (!water) cost.AddCost(ret);
 
 		if (flags & DC_EXEC) {
+			if (IsTileType(current_tile, MP_WATER) && IsCanal(current_tile)) {
+				Owner owner = GetTileOwner(current_tile);
+				if (Company::IsValidID(owner)) {
+					Company::Get(owner)->infrastructure.water--;
+					DirtyCompanyInfrastructureWindows(owner);
+				}
+			}
+
 			switch (wc) {
 				case WATER_CLASS_RIVER:
 					MakeRiver(current_tile, Random());
@@ -486,17 +521,14 @@ CommandCost CmdBuildCanal(DoCommandFlag flags, TileIndex tile, TileIndex start_t
 						MakeSea(current_tile);
 						break;
 					}
-					FALLTHROUGH;
+					[[fallthrough]];
 
 				default:
-					/* If we overbuild a water object with a canal, don't update the infrastructure total. */
-					bool is_existing_canal = IsTileType(current_tile, MP_WATER) && IsCanal(current_tile);
-					if (Company::IsValidID(_current_company) && !is_existing_canal) {
+					MakeCanal(current_tile, _current_company, Random());
+					if (Company::IsValidID(_current_company)) {
 						Company::Get(_current_company)->infrastructure.water++;
 						DirtyCompanyInfrastructureWindows(_current_company);
 					}
-
-					MakeCanal(current_tile, _current_company, Random());
 					break;
 			}
 			MarkTileDirtyByTile(current_tile);
@@ -514,6 +546,7 @@ CommandCost CmdBuildCanal(DoCommandFlag flags, TileIndex tile, TileIndex start_t
 	}
 }
 
+
 static CommandCost ClearTile_Water(TileIndex tile, DoCommandFlag flags)
 {
 	switch (GetWaterTileType(tile)) {
@@ -522,8 +555,8 @@ static CommandCost ClearTile_Water(TileIndex tile, DoCommandFlag flags)
 
 			Money base_cost = IsCanal(tile) ? _price[PR_CLEAR_CANAL] : _price[PR_CLEAR_WATER];
 			/* Make sure freeform edges are allowed or it's not an edge tile. */
-			if (!_settings_game.construction.freeform_edges && (!IsInsideMM(TileX(tile), 1, MapMaxX() - 1) ||
-					!IsInsideMM(TileY(tile), 1, MapMaxY() - 1))) {
+			if (!_settings_game.construction.freeform_edges && (!IsInsideMM(TileX(tile), 1, Map::MaxX() - 1) ||
+					!IsInsideMM(TileY(tile), 1, Map::MaxY() - 1))) {
 				return_cmd_error(STR_ERROR_TOO_CLOSE_TO_EDGE_OF_MAP);
 			}
 
@@ -533,7 +566,7 @@ static CommandCost ClearTile_Water(TileIndex tile, DoCommandFlag flags)
 
 			Owner owner = GetTileOwner(tile);
 			if (owner != OWNER_WATER && owner != OWNER_NONE) {
-				CommandCost ret = CheckTileOwnership(tile);
+				ret = CheckTileOwnership(tile);
 				if (ret.Failed()) return ret;
 			}
 
@@ -544,6 +577,7 @@ static CommandCost ClearTile_Water(TileIndex tile, DoCommandFlag flags)
 				}
 				DoClearSquare(tile);
 				MarkCanalsAndRiversAroundDirty(tile);
+				ClearNeighbourNonFloodingStates(tile);
 			}
 
 			return CommandCost(EXPENSES_CONSTRUCTION, base_cost);
@@ -559,6 +593,7 @@ static CommandCost ClearTile_Water(TileIndex tile, DoCommandFlag flags)
 			if (flags & DC_EXEC) {
 				DoClearSquare(tile);
 				MarkCanalsAndRiversAroundDirty(tile);
+				ClearNeighbourNonFloodingStates(tile);
 			}
 			if (IsSlopeWithOneCornerRaised(slope)) {
 				return CommandCost(EXPENSES_CONSTRUCTION, _price[PR_CLEAR_WATER]);
@@ -701,10 +736,10 @@ static void DrawWaterEdges(bool canal, uint offset, TileIndex tile)
 	uint wa;
 
 	/* determine the edges around with water. */
-	wa  = IsWateredTile(TILE_ADDXY(tile, -1,  0), DIR_SW) << 0;
-	wa += IsWateredTile(TILE_ADDXY(tile,  0,  1), DIR_NW) << 1;
-	wa += IsWateredTile(TILE_ADDXY(tile,  1,  0), DIR_NE) << 2;
-	wa += IsWateredTile(TILE_ADDXY(tile,  0, -1), DIR_SE) << 3;
+	wa  = IsWateredTile(TileAddXY(tile, -1,  0), DIR_SW) << 0;
+	wa += IsWateredTile(TileAddXY(tile,  0,  1), DIR_NW) << 1;
+	wa += IsWateredTile(TileAddXY(tile,  1,  0), DIR_NE) << 2;
+	wa += IsWateredTile(TileAddXY(tile,  0, -1), DIR_SE) << 3;
 
 	if (!(wa & 1)) DrawWaterSprite(base, offset,     feature, tile);
 	if (!(wa & 2)) DrawWaterSprite(base, offset + 1, feature, tile);
@@ -714,30 +749,30 @@ static void DrawWaterEdges(bool canal, uint offset, TileIndex tile)
 	/* right corner */
 	switch (wa & 0x03) {
 		case 0: DrawWaterSprite(base, offset + 4, feature, tile); break;
-		case 3: if (!IsWateredTile(TILE_ADDXY(tile, -1, 1), DIR_W)) DrawWaterSprite(base, offset + 8, feature, tile); break;
+		case 3: if (!IsWateredTile(TileAddXY(tile, -1, 1), DIR_W)) DrawWaterSprite(base, offset + 8, feature, tile); break;
 	}
 
 	/* bottom corner */
 	switch (wa & 0x06) {
 		case 0: DrawWaterSprite(base, offset + 5, feature, tile); break;
-		case 6: if (!IsWateredTile(TILE_ADDXY(tile, 1, 1), DIR_N)) DrawWaterSprite(base, offset + 9, feature, tile); break;
+		case 6: if (!IsWateredTile(TileAddXY(tile, 1, 1), DIR_N)) DrawWaterSprite(base, offset + 9, feature, tile); break;
 	}
 
 	/* left corner */
 	switch (wa & 0x0C) {
 		case  0: DrawWaterSprite(base, offset + 6, feature, tile); break;
-		case 12: if (!IsWateredTile(TILE_ADDXY(tile, 1, -1), DIR_E)) DrawWaterSprite(base, offset + 10, feature, tile); break;
+		case 12: if (!IsWateredTile(TileAddXY(tile, 1, -1), DIR_E)) DrawWaterSprite(base, offset + 10, feature, tile); break;
 	}
 
 	/* upper corner */
 	switch (wa & 0x09) {
 		case 0: DrawWaterSprite(base, offset + 7, feature, tile); break;
-		case 9: if (!IsWateredTile(TILE_ADDXY(tile, -1, -1), DIR_S)) DrawWaterSprite(base, offset + 11, feature, tile); break;
+		case 9: if (!IsWateredTile(TileAddXY(tile, -1, -1), DIR_S)) DrawWaterSprite(base, offset + 11, feature, tile); break;
 	}
 }
 
 /** Draw a plain sea water tile with no edges */
-static void DrawSeaWater(TileIndex tile)
+static void DrawSeaWater(TileIndex)
 {
 	DrawGroundSprite(SPR_FLAT_WATER_TILE, PAL_NONE);
 }
@@ -815,7 +850,7 @@ static void DrawWaterLock(const TileInfo *ti)
 	if (base == 0) {
 		/* If no custom graphics, use defaults. */
 		base = SPR_LOCK_BASE;
-		uint8 z_threshold = part == LOCK_PART_UPPER ? 8 : 0;
+		uint8_t z_threshold = part == LOCK_PART_UPPER ? 8 : 0;
 		zoffs = ti->z > z_threshold ? 24 : 0;
 	}
 
@@ -871,7 +906,7 @@ void DrawShoreTile(Slope tileh)
 {
 	/* Converts the enum Slope into an offset based on SPR_SHORE_BASE.
 	 * This allows to calculate the proper sprite to display for this Slope */
-	static const byte tileh_to_shoresprite[32] = {
+	static const uint8_t tileh_to_shoresprite[32] = {
 		0, 1, 2, 3, 4, 16, 6, 7, 8, 9, 17, 11, 12, 13, 14, 0,
 		0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0,  5,  0, 10, 15, 0,
 	};
@@ -927,15 +962,14 @@ void DrawShipDepotSprite(int x, int y, Axis axis, DepotPart part)
 }
 
 
-static int GetSlopePixelZ_Water(TileIndex tile, uint x, uint y)
+static int GetSlopePixelZ_Water(TileIndex tile, uint x, uint y, bool)
 {
-	int z;
-	Slope tileh = GetTilePixelSlope(tile, &z);
+	auto [tileh, z] = GetTilePixelSlope(tile);
 
 	return z + GetPartialPixelZ(x & 0xF, y & 0xF, tileh);
 }
 
-static Foundation GetFoundation_Water(TileIndex tile, Slope tileh)
+static Foundation GetFoundation_Water(TileIndex, Slope)
 {
 	return FOUNDATION_NONE;
 }
@@ -970,11 +1004,11 @@ static void GetTileDesc_Water(TileIndex tile, TileDesc *td)
  */
 static void FloodVehicle(Vehicle *v)
 {
-	uint pass = v->Crash(true);
+	uint victims = v->Crash(true);
 
-	AI::NewEvent(v->owner, new ScriptEventVehicleCrashed(v->index, v->tile, ScriptEventVehicleCrashed::CRASH_FLOODED));
-	Game::NewEvent(new ScriptEventVehicleCrashed(v->index, v->tile, ScriptEventVehicleCrashed::CRASH_FLOODED));
-	SetDParam(0, pass);
+	AI::NewEvent(v->owner, new ScriptEventVehicleCrashed(v->index, v->tile, ScriptEventVehicleCrashed::CRASH_FLOODED, victims));
+	Game::NewEvent(new ScriptEventVehicleCrashed(v->index, v->tile, ScriptEventVehicleCrashed::CRASH_FLOODED, victims));
+	SetDParam(0, victims);
 	AddTileNewsItem(STR_NEWS_DISASTER_FLOOD_VEHICLE, NT_ACCIDENT, v->tile);
 	CreateEffectVehicleRel(v, 4, 4, 8, EV_EXPLOSION_LARGE);
 	if (_settings_client.sound.disaster) SndPlayVehicleFx(SND_12_EXPLOSION, v);
@@ -1068,7 +1102,7 @@ FloodingBehaviour GetFloodingBehaviour(TileIndex tile)
 				Slope tileh = GetTileSlope(tile);
 				return (IsSlopeWithOneCornerRaised(tileh) ? FLOOD_ACTIVE : FLOOD_DRYUP);
 			}
-			FALLTHROUGH;
+			[[fallthrough]];
 		case MP_STATION:
 		case MP_INDUSTRY:
 		case MP_OBJECT:
@@ -1083,6 +1117,9 @@ FloodingBehaviour GetFloodingBehaviour(TileIndex tile)
 		case MP_TREES:
 			return (GetTreeGround(tile) == TREE_GROUND_SHORE ? FLOOD_DRYUP : FLOOD_NONE);
 
+		case MP_VOID:
+			return FLOOD_ACTIVE;
+
 		default:
 			return FLOOD_NONE;
 	}
@@ -1091,13 +1128,13 @@ FloodingBehaviour GetFloodingBehaviour(TileIndex tile)
 /**
  * Floods a tile.
  */
-void DoFloodTile(TileIndex target)
+static void DoFloodTile(TileIndex target)
 {
 	assert(!IsTileType(target, MP_WATER));
 
 	bool flooded = false; // Will be set to true if something is changed.
 
-	Backup<CompanyID> cur_company(_current_company, OWNER_WATER, FILE_LINE);
+	Backup<CompanyID> cur_company(_current_company, OWNER_WATER);
 
 	Slope tileh = GetTileSlope(target);
 	if (tileh != SLOPE_FLAT) {
@@ -1117,7 +1154,7 @@ void DoFloodTile(TileIndex target)
 					flooded = true;
 					break;
 				}
-				FALLTHROUGH;
+				[[fallthrough]];
 
 			case MP_CLEAR:
 				if (Command<CMD_LANDSCAPE_CLEAR>::Do(DC_EXEC, target).Succeeded()) {
@@ -1160,7 +1197,7 @@ void DoFloodTile(TileIndex target)
  */
 static void DoDryUp(TileIndex tile)
 {
-	Backup<CompanyID> cur_company(_current_company, OWNER_WATER, FILE_LINE);
+	Backup<CompanyID> cur_company(_current_company, OWNER_WATER);
 
 	switch (GetTileType(tile)) {
 		case MP_RAILWAY:
@@ -1207,34 +1244,47 @@ static void DoDryUp(TileIndex tile)
  */
 void TileLoop_Water(TileIndex tile)
 {
-	if (IsTileType(tile, MP_WATER)) AmbientSoundEffect(tile);
+	if (IsTileType(tile, MP_WATER)) {
+		AmbientSoundEffect(tile);
+		if (IsNonFloodingWaterTile(tile)) return;
+	}
 
 	switch (GetFloodingBehaviour(tile)) {
-		case FLOOD_ACTIVE:
+		case FLOOD_ACTIVE: {
+			bool continue_flooding = false;
 			for (Direction dir = DIR_BEGIN; dir < DIR_END; dir++) {
-				TileIndex dest = tile + TileOffsByDir(dir);
+				TileIndex dest = AddTileIndexDiffCWrap(tile, TileIndexDiffCByDir(dir));
+				/* Contrary to drying up, flooding does not consider MP_VOID tiles. */
 				if (!IsValidTile(dest)) continue;
 				/* do not try to flood water tiles - increases performance a lot */
 				if (IsTileType(dest, MP_WATER)) continue;
 
+				/* Buoys and docks cannot be flooded, and when removed turn into flooding water. */
+				if (IsTileType(dest, MP_STATION) && (IsBuoy(dest) || IsDock(dest))) continue;
+
+				/* This neighbour tile might be floodable later if the tile is cleared, so allow flooding to continue. */
+				continue_flooding = true;
+
 				/* TREE_GROUND_SHORE is the sign of a previous flood. */
 				if (IsTileType(dest, MP_TREES) && GetTreeGround(dest) == TREE_GROUND_SHORE) continue;
 
-				int z_dest;
-				Slope slope_dest = GetFoundationSlope(dest, &z_dest) & ~SLOPE_HALFTILE_MASK & ~SLOPE_STEEP;
+				auto [slope_dest, z_dest] = GetFoundationSlope(dest);
 				if (z_dest > 0) continue;
 
-				if (!HasBit(_flood_from_dirs[slope_dest], ReverseDir(dir))) continue;
+				if (!HasBit(_flood_from_dirs[slope_dest & ~SLOPE_HALFTILE_MASK & ~SLOPE_STEEP], ReverseDir(dir))) continue;
 
 				DoFloodTile(dest);
 			}
+			if (!continue_flooding && IsTileType(tile, MP_WATER)) SetNonFloodingWaterTile(tile, true);
 			break;
+		}
 
 		case FLOOD_DRYUP: {
-			Slope slope_here = GetFoundationSlope(tile) & ~SLOPE_HALFTILE_MASK & ~SLOPE_STEEP;
-			for (uint dir : SetBitIterator(_flood_from_dirs[slope_here])) {
-				TileIndex dest = tile + TileOffsByDir((Direction)dir);
-				if (!IsValidTile(dest)) continue;
+			Slope slope_here = std::get<0>(GetFoundationSlope(tile)) & ~SLOPE_HALFTILE_MASK & ~SLOPE_STEEP;
+			for (Direction dir : SetBitIterator<Direction>(_flood_from_dirs[slope_here])) {
+				TileIndex dest = AddTileIndexDiffCWrap(tile, TileIndexDiffCByDir(dir));
+				/* Contrary to flooding, drying up does consider MP_VOID tiles. */
+				if (dest == INVALID_TILE) continue;
 
 				FloodingBehaviour dest_behaviour = GetFloodingBehaviour(dest);
 				if ((dest_behaviour == FLOOD_ACTIVE) || (dest_behaviour == FLOOD_PASSIVE)) return;
@@ -1249,10 +1299,8 @@ void TileLoop_Water(TileIndex tile)
 
 void ConvertGroundTilesIntoWaterTiles()
 {
-	int z;
-
-	for (TileIndex tile = 0; tile < MapSize(); ++tile) {
-		Slope slope = GetTileSlope(tile, &z);
+	for (TileIndex tile = 0; tile < Map::Size(); ++tile) {
+		auto [slope, z] = GetTileSlopeZ(tile);
 		if (IsTileType(tile, MP_CLEAR) && z == 0) {
 			/* Make both water for tiles at level 0
 			 * and make shore, as that looks much better
@@ -1270,10 +1318,10 @@ void ConvertGroundTilesIntoWaterTiles()
 					break;
 
 				default:
-					for (uint dir : SetBitIterator(_flood_from_dirs[slope & ~SLOPE_STEEP])) {
-						TileIndex dest = TileAddByDir(tile, (Direction)dir);
+					for (Direction dir : SetBitIterator<Direction>(_flood_from_dirs[slope & ~SLOPE_STEEP])) {
+						TileIndex dest = TileAddByDir(tile, dir);
 						Slope slope_dest = GetTileSlope(dest) & ~SLOPE_STEEP;
-						if (slope_dest == SLOPE_FLAT || IsSlopeWithOneCornerRaised(slope_dest)) {
+						if (slope_dest == SLOPE_FLAT || IsSlopeWithOneCornerRaised(slope_dest) || IsTileType(dest, MP_VOID)) {
 							MakeShore(tile);
 							break;
 						}
@@ -1284,7 +1332,7 @@ void ConvertGroundTilesIntoWaterTiles()
 	}
 }
 
-static TrackStatus GetTileTrackStatus_Water(TileIndex tile, TransportType mode, uint sub_mode, DiagDirection side)
+static TrackStatus GetTileTrackStatus_Water(TileIndex tile, TransportType mode, uint, DiagDirection)
 {
 	static const TrackBits coast_tracks[] = {TRACK_BIT_NONE, TRACK_BIT_RIGHT, TRACK_BIT_UPPER, TRACK_BIT_NONE, TRACK_BIT_LEFT, TRACK_BIT_NONE, TRACK_BIT_NONE,
 		TRACK_BIT_NONE, TRACK_BIT_LOWER, TRACK_BIT_NONE, TRACK_BIT_NONE, TRACK_BIT_NONE, TRACK_BIT_NONE, TRACK_BIT_NONE, TRACK_BIT_NONE, TRACK_BIT_NONE};
@@ -1356,12 +1404,12 @@ static void ChangeTileOwner_Water(TileIndex tile, Owner old_owner, Owner new_own
 	}
 }
 
-static VehicleEnterTileStatus VehicleEnter_Water(Vehicle *v, TileIndex tile, int x, int y)
+static VehicleEnterTileStatus VehicleEnter_Water(Vehicle *, TileIndex, int, int)
 {
 	return VETSB_CONTINUE;
 }
 
-static CommandCost TerraformTile_Water(TileIndex tile, DoCommandFlag flags, int z_new, Slope tileh_new)
+static CommandCost TerraformTile_Water(TileIndex tile, DoCommandFlag flags, int, Slope)
 {
 	/* Canals can't be terraformed */
 	if (IsWaterTile(tile) && IsCanal(tile)) return_cmd_error(STR_ERROR_MUST_DEMOLISH_CANAL_FIRST);

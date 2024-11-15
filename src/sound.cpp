@@ -12,6 +12,7 @@
 #include "mixer.h"
 #include "newgrf_sound.h"
 #include "random_access_file_type.h"
+#include "window_func.h"
 #include "window_gui.h"
 #include "vehicle_base.h"
 
@@ -23,7 +24,7 @@
 
 static SoundEntry _original_sounds[ORIGINAL_SAMPLE_COUNT];
 
-static void OpenBankFile(const char *filename)
+static void OpenBankFile(const std::string &filename)
 {
 	/**
 	 * The sound file for the original sounds, i.e. those not defined/overridden by a NewGRF.
@@ -34,7 +35,7 @@ static void OpenBankFile(const char *filename)
 	memset(_original_sounds, 0, sizeof(_original_sounds));
 
 	/* If there is no sound file (nosound set), don't load anything */
-	if (filename == nullptr) return;
+	if (filename.empty()) return;
 
 	original_sound_file.reset(new RandomAccessFile(filename, BASESET_DIR));
 	size_t pos = original_sound_file->GetPos();
@@ -75,8 +76,8 @@ static void OpenBankFile(const char *filename)
 
 			/* Read riff tags */
 			for (;;) {
-				uint32 tag = original_sound_file->ReadDword();
-				uint32 size = original_sound_file->ReadDword();
+				uint32_t tag = original_sound_file->ReadDword();
+				uint32_t size = original_sound_file->ReadDword();
 
 				if (tag == ' tmf') {
 					original_sound_file->ReadWord();                          // wFormatTag
@@ -117,9 +118,9 @@ static bool SetBankSource(MixerChannel *mc, const SoundEntry *sound)
 	assert(sound != nullptr);
 
 	/* Check for valid sound size. */
-	if (sound->file_size == 0 || sound->file_size > ((size_t)-1) - 2) return false;
+	if (sound->file_size == 0 || sound->file_size > SIZE_MAX - 2) return false;
 
-	int8 *mem = MallocT<int8>(sound->file_size + 2);
+	int8_t *mem = MallocT<int8_t>(sound->file_size + 2);
 	/* Add two extra bytes so rate conversion can read these
 	 * without reading out of its input buffer. */
 	mem[sound->file_size    ] = 0;
@@ -136,15 +137,15 @@ static bool SetBankSource(MixerChannel *mc, const SoundEntry *sound)
 		}
 	}
 
-#if TTD_ENDIAN == TTD_BIG_ENDIAN
-	if (sound->bits_per_sample == 16) {
-		uint num_samples = sound->file_size / 2;
-		int16 *samples = (int16 *)mem;
-		for (uint i = 0; i < num_samples; i++) {
-			samples[i] = BSWAP16(samples[i]);
+	if constexpr (std::endian::native == std::endian::big) {
+		if (sound->bits_per_sample == 16) {
+			size_t num_samples = sound->file_size / 2;
+			int16_t *samples = reinterpret_cast<int16_t *>(mem);
+			for (size_t i = 0; i < num_samples; i++) {
+				samples[i] = BSWAP16(samples[i]);
+			}
 		}
 	}
-#endif
 
 	assert(sound->bits_per_sample == 8 || sound->bits_per_sample == 16);
 	assert(sound->channels == 1);
@@ -194,10 +195,10 @@ static void StartSound(SoundID sound_id, float pan, uint volume)
 }
 
 
-static const byte _vol_factor_by_zoom[] = {255, 255, 255, 190, 134, 87};
-static_assert(lengthof(_vol_factor_by_zoom) == ZOOM_LVL_COUNT);
+static const uint8_t _vol_factor_by_zoom[] = {255, 255, 255, 190, 134, 87};
+static_assert(lengthof(_vol_factor_by_zoom) == ZOOM_LVL_END);
 
-static const byte _sound_base_vol[] = {
+static const uint8_t _sound_base_vol[] = {
 	128,  90, 128, 128, 128, 128, 128, 128,
 	128,  90,  90, 128, 128, 128, 128, 128,
 	128, 128, 128,  80, 128, 128, 128, 128,
@@ -210,7 +211,7 @@ static const byte _sound_base_vol[] = {
 	 90,
 };
 
-static const byte _sound_idx[] = {
+static const uint8_t _sound_idx[] = {
 	 2,  3,  4,  5,  6,  7,  8,  9,
 	10, 11, 12, 13, 14, 15, 16, 17,
 	18, 19, 20, 21, 22, 23, 24, 25,
@@ -231,6 +232,36 @@ void SndCopyToPool()
 		sound[i].volume = _sound_base_vol[i];
 		sound[i].priority = 0;
 	}
+}
+
+/**
+ * Change the configured sound set and reset sounds.
+ * @param index Index of sound set to switch to.
+ */
+void ChangeSoundSet(int index)
+{
+	if (BaseSounds::GetIndexOfUsedSet() == index) return;
+
+	auto set = BaseSounds::GetSet(index);
+	BaseSounds::ini_set = set->name;
+	BaseSounds::SetSet(set);
+
+	MxCloseAllChannels();
+	InitializeSound();
+
+	/* Replace baseset sounds in the pool with the updated original sounds. This is safe to do as
+	 * any sound still playing owns its sample data. */
+	for (uint i = 0; i < ORIGINAL_SAMPLE_COUNT; i++) {
+		SoundEntry *sound = GetSound(i);
+		/* GRF Container 0 means the sound comes from the baseset, and isn't overridden by NewGRF. */
+		if (sound == nullptr || sound->grf_container_ver != 0) continue;
+
+		*sound = _original_sounds[_sound_idx[i]];
+		sound->volume = _sound_base_vol[i];
+		sound->priority = 0;
+	}
+
+	InvalidateWindowData(WC_GAME_OPTIONS, WN_GAME_OPTIONS_GAME_OPTIONS, 0, true);
 }
 
 /**
@@ -258,7 +289,7 @@ static void SndPlayScreenCoordFx(SoundID sound, int left, int right, int top, in
 			StartSound(
 				sound,
 				panning,
-				_vol_factor_by_zoom[vp->zoom - ZOOM_LVL_BEGIN]
+				_vol_factor_by_zoom[vp->zoom]
 			);
 			return;
 		}
@@ -268,8 +299,8 @@ static void SndPlayScreenCoordFx(SoundID sound, int left, int right, int top, in
 void SndPlayTileFx(SoundID sound, TileIndex tile)
 {
 	/* emits sound from center of the tile */
-	int x = std::min(MapMaxX() - 1, TileX(tile)) * TILE_SIZE + TILE_SIZE / 2;
-	int y = std::min(MapMaxY() - 1, TileY(tile)) * TILE_SIZE - TILE_SIZE / 2;
+	int x = std::min(Map::MaxX() - 1, TileX(tile)) * TILE_SIZE + TILE_SIZE / 2;
+	int y = std::min(Map::MaxY() - 1, TileY(tile)) * TILE_SIZE - TILE_SIZE / 2;
 	int z = (y < 0 ? 0 : GetSlopePixelZ(x, y));
 	Point pt = RemapCoords(x, y, z);
 	y += 2 * TILE_SIZE;

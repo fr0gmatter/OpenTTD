@@ -57,6 +57,20 @@ enum TreeGround {
 	TREE_GROUND_ROUGH_SNOW  = 4, ///< A snow tile that is rough underneath.
 };
 
+/**
+ * Enumeration for tree growth stages.
+ *
+ * This enumeration defines the stages of tree growth for tiles with trees on it.
+ */
+enum class TreeGrowthStage : uint {
+	Growing1 = 0,  ///< First stage of growth
+	Growing2 = 1,  ///< Second stage of growth
+	Growing3 = 2,  ///< Third stage of growth
+	Grown = 3,  ///< Fully grown tree
+	Dying1 = 4,  ///< First stage of dying
+	Dying2 = 5,  ///< Second stage of dying
+	Dead = 6,  ///< Dead tree
+};
 
 /**
  * Returns the treetype of a tile.
@@ -70,10 +84,10 @@ enum TreeGround {
  * @return The treetype of the given tile with trees
  * @pre Tile t must be of type MP_TREES
  */
-static inline TreeType GetTreeType(TileIndex t)
+inline TreeType GetTreeType(Tile t)
 {
 	assert(IsTileType(t, MP_TREES));
-	return (TreeType)_m[t].m3;
+	return (TreeType)t.m3();
 }
 
 /**
@@ -85,10 +99,10 @@ static inline TreeType GetTreeType(TileIndex t)
  * @return The groundtype of the tile
  * @pre Tile must be of type MP_TREES
  */
-static inline TreeGround GetTreeGround(TileIndex t)
+inline TreeGround GetTreeGround(Tile t)
 {
 	assert(IsTileType(t, MP_TREES));
-	return (TreeGround)GB(_m[t].m2, 6, 3);
+	return (TreeGround)GB(t.m2(), 6, 3);
 }
 
 /**
@@ -110,10 +124,10 @@ static inline TreeGround GetTreeGround(TileIndex t)
  * @pre Tile must be of type MP_TREES
  * @see GetTreeCount
  */
-static inline uint GetTreeDensity(TileIndex t)
+inline uint GetTreeDensity(Tile t)
 {
 	assert(IsTileType(t, MP_TREES));
-	return GB(_m[t].m2, 4, 2);
+	return GB(t.m2(), 4, 2);
 }
 
 /**
@@ -127,11 +141,11 @@ static inline uint GetTreeDensity(TileIndex t)
  * @param d The density to save with
  * @pre Tile must be of type MP_TREES
  */
-static inline void SetTreeGroundDensity(TileIndex t, TreeGround g, uint d)
+inline void SetTreeGroundDensity(Tile t, TreeGround g, uint d)
 {
 	assert(IsTileType(t, MP_TREES)); // XXX incomplete
-	SB(_m[t].m2, 4, 2, d);
-	SB(_m[t].m2, 6, 3, g);
+	SB(t.m2(), 4, 2, d);
+	SB(t.m2(), 6, 3, g);
 	SetWaterClass(t, g == TREE_GROUND_SHORE ? WATER_CLASS_SEA : WATER_CLASS_INVALID);
 }
 
@@ -146,10 +160,10 @@ static inline void SetTreeGroundDensity(TileIndex t, TreeGround g, uint d)
  * @return The number of trees (1-4)
  * @pre Tile must be of type MP_TREES
  */
-static inline uint GetTreeCount(TileIndex t)
+inline uint GetTreeCount(Tile t)
 {
 	assert(IsTileType(t, MP_TREES));
-	return GB(_m[t].m5, 6, 2) + 1;
+	return GB(t.m5(), 6, 2) + 1;
 }
 
 /**
@@ -163,100 +177,56 @@ static inline uint GetTreeCount(TileIndex t)
  * @param c The value to add (or reduce) on the tree-count value
  * @pre Tile must be of type MP_TREES
  */
-static inline void AddTreeCount(TileIndex t, int c)
+inline void AddTreeCount(Tile t, int c)
 {
 	assert(IsTileType(t, MP_TREES)); // XXX incomplete
-	_m[t].m5 += c << 6;
+	t.m5() += c << 6;
 }
 
 /**
- * Returns the tree growth status.
+ * Returns the tree growth stage.
  *
- * This function returns the tree growth status of a tile with trees.
+ * This function returns the tree growth stage of a tile with trees.
  *
- * @param t The tile to get the tree growth status
- * @return The tree growth status
+ * @param t The tile to get the tree growth stage
+ * @return The tree growth stage
  * @pre Tile must be of type MP_TREES
  */
-static inline uint GetTreeGrowth(TileIndex t)
+inline TreeGrowthStage GetTreeGrowth(Tile t)
 {
 	assert(IsTileType(t, MP_TREES));
-	return GB(_m[t].m5, 0, 3);
+	return static_cast<TreeGrowthStage>(GB(t.m5(), 0, 3));
 }
 
 /**
- * Add a value to the tree growth status.
+ * Add a value to the tree growth stage.
  *
- * This function adds a value to the tree grow status of a tile.
+ * This function adds a value to the tree grow stage of a tile.
  *
  * @param t The tile to add the value on
- * @param a The value to add on the tree growth status
+ * @param a The value to add on the tree growth stage
  * @pre Tile must be of type MP_TREES
  */
-static inline void AddTreeGrowth(TileIndex t, int a)
+inline void AddTreeGrowth(Tile t, int a)
 {
 	assert(IsTileType(t, MP_TREES)); // XXX incomplete
-	_m[t].m5 += a;
+	t.m5() += a;
 }
 
 /**
- * Sets the tree growth status of a tile.
+ * Sets the tree growth stage of a tile.
  *
- * This function sets the tree growth status of a tile directly with
+ * This function sets the tree growth stage of a tile directly with
  * the given value.
  *
- * @param t The tile to change the tree growth status
+ * @param t The tile to change the tree growth stage
  * @param g The new value
  * @pre Tile must be of type MP_TREES
  */
-static inline void SetTreeGrowth(TileIndex t, uint g)
+inline void SetTreeGrowth(Tile t, TreeGrowthStage g)
 {
 	assert(IsTileType(t, MP_TREES)); // XXX incomplete
-	SB(_m[t].m5, 0, 3, g);
-}
-
-/**
- * Get the tick counter of a tree tile.
- *
- * Returns the saved tick counter of a given tile.
- *
- * @param t The tile to get the counter value from
- * @pre Tile must be of type MP_TREES
- */
-static inline uint GetTreeCounter(TileIndex t)
-{
-	assert(IsTileType(t, MP_TREES));
-	return GB(_m[t].m2, 0, 4);
-}
-
-/**
- * Add a value on the tick counter of a tree-tile
- *
- * This function adds a value on the tick counter of a tree-tile.
- *
- * @param t The tile to add the value on
- * @param a The value to add on the tick counter
- * @pre Tile must be of type MP_TREES
- */
-static inline void AddTreeCounter(TileIndex t, int a)
-{
-	assert(IsTileType(t, MP_TREES)); // XXX incomplete
-	_m[t].m2 += a;
-}
-
-/**
- * Set the tick counter for a tree-tile
- *
- * This function sets directly the tick counter for a tree-tile.
- *
- * @param t The tile to set the tick counter
- * @param c The new tick counter value
- * @pre Tile must be of type MP_TREES
- */
-static inline void SetTreeCounter(TileIndex t, uint c)
-{
-	assert(IsTileType(t, MP_TREES)); // XXX incomplete
-	SB(_m[t].m2, 0, 4, c);
+	SB(t.m5(), 0, 3, static_cast<uint>(g));
 }
 
 /**
@@ -267,21 +237,21 @@ static inline void SetTreeCounter(TileIndex t, uint c)
  * @param t The tile to make a tree-tile from
  * @param type The type of the tree
  * @param count the number of trees
- * @param growth the growth status
+ * @param growth the growth stage
  * @param ground the ground type
  * @param density the density (not the number of trees)
  */
-static inline void MakeTree(TileIndex t, TreeType type, uint count, uint growth, TreeGround ground, uint density)
+inline void MakeTree(Tile t, TreeType type, uint count, TreeGrowthStage growth, TreeGround ground, uint density)
 {
 	SetTileType(t, MP_TREES);
 	SetTileOwner(t, OWNER_NONE);
 	SetWaterClass(t, ground == TREE_GROUND_SHORE ? WATER_CLASS_SEA : WATER_CLASS_INVALID);
-	_m[t].m2 = ground << 6 | density << 4 | 0;
-	_m[t].m3 = type;
-	_m[t].m4 = 0 << 5 | 0 << 2;
-	_m[t].m5 = count << 6 | growth;
-	SB(_me[t].m6, 2, 4, 0);
-	_me[t].m7 = 0;
+	t.m2() = ground << 6 | density << 4 | 0;
+	t.m3() = type;
+	t.m4() = 0 << 5 | 0 << 2;
+	t.m5() = count << 6 | static_cast<uint>(growth);
+	SB(t.m6(), 2, 4, 0);
+	t.m7() = 0;
 }
 
 #endif /* TREE_MAP_H */

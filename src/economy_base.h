@@ -22,29 +22,22 @@ extern CargoPaymentPool _cargo_payment_pool;
  * Helper class to perform the cargo payment.
  */
 struct CargoPayment : CargoPaymentPool::PoolItem<&_cargo_payment_pool> {
+	/* CargoPaymentID index member of CargoPaymentPool is 4 bytes. */
+	StationID current_station; ///< NOSAVE: The current station
+	Company *owner; ///< NOSAVE: The owner of the vehicle
+
 	Vehicle *front;        ///< The front vehicle to do the payment of
 	Money route_profit;    ///< The amount of money to add/remove from the bank account
 	Money visual_profit;   ///< The visual profit to show
 	Money visual_transfer; ///< The transfer credits to be shown
-
-	/* Unsaved variables */
-	Company *owner;            ///< The owner of the vehicle
-	StationID current_station; ///< The current station
-	CargoID ct;                ///< The currently handled cargo type
 
 	/** Constructor for pool saveload */
 	CargoPayment() {}
 	CargoPayment(Vehicle *front);
 	~CargoPayment();
 
-	Money PayTransfer(const CargoPacket *cp, uint count);
-	void PayFinalDelivery(const CargoPacket *cp, uint count);
-
-	/**
-	 * Sets the currently handled cargo type.
-	 * @param ct the cargo type to handle from now on.
-	 */
-	void SetCargo(CargoID ct) { this->ct = ct; }
+	Money PayTransfer(CargoID cargo, const CargoPacket *cp, uint count, TileIndex current_tile);
+	void PayFinalDelivery(CargoID cargo, const CargoPacket *cp, uint count, TileIndex current_tile);
 };
 
 #endif /* ECONOMY_BASE_H */

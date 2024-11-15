@@ -11,7 +11,8 @@
 #define WIDGETS_TOWN_WIDGET_H
 
 /** Widgets of the #TownDirectoryWindow class. */
-enum TownDirectoryWidgets {
+enum TownDirectoryWidgets : WidgetID {
+	WID_TD_CAPTION, ///< Caption of the window.
 	WID_TD_SORT_ORDER,       ///< Direction of sort dropdown.
 	WID_TD_SORT_CRITERIA,    ///< Criteria of sort dropdown.
 	WID_TD_FILTER,           ///< Filter of name.
@@ -21,7 +22,7 @@ enum TownDirectoryWidgets {
 };
 
 /** Widgets of the #TownAuthorityWindow class. */
-enum TownAuthorityWidgets {
+enum TownAuthorityWidgets : WidgetID {
 	WID_TA_CAPTION,      ///< Caption of window.
 	WID_TA_ZONE_BUTTON,  ///< Turn on/off showing local authority zone.
 	WID_TA_RATING_INFO,  ///< Overview with ratings for each company.
@@ -32,7 +33,7 @@ enum TownAuthorityWidgets {
 };
 
 /** Widgets of the #TownViewWindow class. */
-enum TownViewWidgets {
+enum TownViewWidgets : WidgetID {
 	WID_TV_CAPTION,        ///< Caption of window.
 	WID_TV_VIEWPORT,       ///< View of the center of the town.
 	WID_TV_INFO,           ///< General information about the town.
@@ -45,10 +46,11 @@ enum TownViewWidgets {
 };
 
 /** Widgets of the #FoundTownWindow class. */
-enum TownFoundingWidgets {
+enum TownFoundingWidgets : WidgetID {
 	WID_TF_NEW_TOWN,          ///< Create a new town.
 	WID_TF_RANDOM_TOWN,       ///< Randomly place a town.
 	WID_TF_MANY_RANDOM_TOWNS, ///< Randomly place many towns.
+	WID_TF_LOAD_FROM_FILE,    ///< Load town data from file.
 	WID_TF_EXPAND_ALL_TOWNS,  ///< Make all towns grow slightly.
 	WID_TF_TOWN_NAME_EDITBOX, ///< Editor for the town name.
 	WID_TF_TOWN_NAME_RANDOM,  ///< Generate a random town name.

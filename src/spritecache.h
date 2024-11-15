@@ -15,11 +15,11 @@
 
 /** Data structure describing a sprite. */
 struct Sprite {
-	uint16 height; ///< Height of the sprite.
-	uint16 width;  ///< Width of the sprite.
-	int16 x_offs;  ///< Number of pixels to shift the sprite to the right.
-	int16 y_offs;  ///< Number of pixels to shift the sprite downwards.
-	byte data[];   ///< Sprite data.
+	uint16_t height; ///< Height of the sprite.
+	uint16_t width;  ///< Width of the sprite.
+	int16_t x_offs;  ///< Number of pixels to shift the sprite to the right.
+	int16_t y_offs;  ///< Number of pixels to shift the sprite downwards.
+	uint8_t data[];   ///< Sprite data.
 };
 
 enum SpriteCacheCtrlFlags {
@@ -31,41 +31,54 @@ enum SpriteCacheCtrlFlags {
 
 extern uint _sprite_cache_size;
 
-typedef void *AllocatorProc(size_t size);
+/** SpriteAllocate that uses malloc to allocate memory. */
+class SimpleSpriteAllocator : public SpriteAllocator {
+protected:
+	void *AllocatePtr(size_t size) override;
+};
 
-void *SimpleSpriteAlloc(size_t size);
-void *GetRawSprite(SpriteID sprite, SpriteType type, AllocatorProc *allocator = nullptr, SpriteEncoder *encoder = nullptr);
+/** SpriteAllocator that allocates memory via a unique_ptr array. */
+class UniquePtrSpriteAllocator : public SpriteAllocator {
+public:
+	std::unique_ptr<uint8_t[]> data;
+protected:
+	void *AllocatePtr(size_t size) override;
+};
+
+void *GetRawSprite(SpriteID sprite, SpriteType type, SpriteAllocator *allocator = nullptr, SpriteEncoder *encoder = nullptr);
 bool SpriteExists(SpriteID sprite);
 
 SpriteType GetSpriteType(SpriteID sprite);
 SpriteFile *GetOriginFile(SpriteID sprite);
-uint32 GetSpriteLocalID(SpriteID sprite);
+uint32_t GetSpriteLocalID(SpriteID sprite);
 uint GetSpriteCountForFile(const std::string &filename, SpriteID begin, SpriteID end);
 uint GetMaxSpriteID();
 
 
-static inline const Sprite *GetSprite(SpriteID sprite, SpriteType type)
+inline const Sprite *GetSprite(SpriteID sprite, SpriteType type)
 {
-	assert(type != ST_RECOLOUR);
+	assert(type != SpriteType::Recolour);
 	return (Sprite*)GetRawSprite(sprite, type);
 }
 
-static inline const byte *GetNonSprite(SpriteID sprite, SpriteType type)
+inline const uint8_t *GetNonSprite(SpriteID sprite, SpriteType type)
 {
-	assert(type == ST_RECOLOUR);
-	return (byte*)GetRawSprite(sprite, type);
+	assert(type == SpriteType::Recolour);
+	return (uint8_t*)GetRawSprite(sprite, type);
 }
 
 void GfxInitSpriteMem();
 void GfxClearSpriteCache();
+void GfxClearFontSpriteCache();
 void IncreaseSpriteLRU();
 
 SpriteFile &OpenCachedSpriteFile(const std::string &filename, Subdirectory subdir, bool palette_remap);
+std::span<const std::unique_ptr<SpriteFile>> GetCachedSpriteFiles();
 
 void ReadGRFSpriteOffsets(SpriteFile &file);
-size_t GetGRFSpriteOffset(uint32 id);
-bool LoadNextSprite(int load_index, SpriteFile &file, uint file_sprite_id);
-bool SkipSpriteData(SpriteFile &file, byte type, uint16 num);
+size_t GetGRFSpriteOffset(uint32_t id);
+bool LoadNextSprite(SpriteID load_index, SpriteFile &file, uint file_sprite_id);
+bool SkipSpriteData(SpriteFile &file, uint8_t type, uint16_t num);
 void DupSprite(SpriteID old_spr, SpriteID new_spr);
 
 #endif /* SPRITECACHE_H */

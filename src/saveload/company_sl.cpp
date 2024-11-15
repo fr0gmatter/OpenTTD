@@ -42,7 +42,7 @@
  * @param face the face in the old format
  * @return the face in the new format
  */
-CompanyManagerFace ConvertFromOldCompanyManagerFace(uint32 face)
+CompanyManagerFace ConvertFromOldCompanyManagerFace(uint32_t face)
 {
 	CompanyManagerFace cmf = 0;
 	GenderEthnicity ge = GE_WM;
@@ -96,7 +96,7 @@ CompanyManagerFace ConvertFromOldCompanyManagerFace(uint32 face)
 void AfterLoadCompanyStats()
 {
 	/* Reset infrastructure statistics to zero. */
-	for (Company *c : Company::Iterate()) MemSetT(&c->infrastructure, 0);
+	for (Company *c : Company::Iterate()) c->infrastructure = {};
 
 	/* Collect airport count. */
 	for (const Station *st : Station::Iterate()) {
@@ -106,7 +106,7 @@ void AfterLoadCompanyStats()
 	}
 
 	Company *c;
-	for (TileIndex tile = 0; tile < MapSize(); tile++) {
+	for (TileIndex tile = 0; tile < Map::Size(); tile++) {
 		switch (GetTileType(tile)) {
 			case MP_RAILWAY:
 				c = Company::GetIfValid(GetTileOwner(tile));
@@ -151,7 +151,8 @@ void AfterLoadCompanyStats()
 						break;
 
 					case STATION_BUS:
-					case STATION_TRUCK: {
+					case STATION_TRUCK:
+					case STATION_ROADWAYPOINT: {
 						/* Iterate all present road types as each can have a different owner. */
 						for (RoadTramType rtt : _roadtramtypes) {
 							RoadType rt = GetRoadType(tile, rtt);
@@ -186,7 +187,7 @@ void AfterLoadCompanyStats()
 						}
 					}
 				}
-				FALLTHROUGH;
+				[[fallthrough]];
 
 			case MP_OBJECT:
 				if (GetWaterClass(tile) == WATER_CLASS_CANAL) {
@@ -240,7 +241,7 @@ void AfterLoadCompanyStats()
 
 /* We do need to read this single value, as the bigger it gets, the more data is stored */
 struct CompanyOldAI {
-	uint8 num_build_rec;
+	uint8_t num_build_rec;
 };
 
 class SlCompanyOldAIBuildRec : public DefaultSaveLoadHandler<SlCompanyOldAIBuildRec, CompanyOldAI> {
@@ -364,7 +365,7 @@ public:
 	void Load(CompanyProperties *c) const override
 	{
 		if (!IsSavegameVersionBefore(SLV_SAVELOAD_LIST_LENGTH)) {
-			c->num_valid_stat_ent = (uint8)SlGetStructListLength(UINT8_MAX);
+			c->num_valid_stat_ent = (uint8_t)SlGetStructListLength(UINT8_MAX);
 		}
 		if (c->num_valid_stat_ent > lengthof(c->old_economy)) SlErrorCorrupt("Too many old economy entries");
 
@@ -440,6 +441,38 @@ public:
 	void LoadCheck(CompanyProperties *c) const override { this->Load(c); }
 };
 
+class SlAllowListData : public DefaultSaveLoadHandler<SlAllowListData, CompanyProperties> {
+public:
+	struct KeyWrapper {
+		std::string key;
+	};
+
+	inline static const SaveLoad description[] = {
+		SLE_SSTR(KeyWrapper, key, SLE_STR),
+	};
+	inline const static SaveLoadCompatTable compat_description = {};
+
+	void Save(CompanyProperties *cprops) const override
+	{
+		SlSetStructListLength(cprops->allow_list.size());
+		for (std::string &str : cprops->allow_list) {
+			SlObject(&str, this->GetDescription());
+		}
+	}
+
+	void Load(CompanyProperties *cprops) const override
+	{
+		size_t num_keys = SlGetStructListLength(UINT32_MAX);
+		cprops->allow_list.clear();
+		cprops->allow_list.resize(num_keys);
+		for (std::string &str : cprops->allow_list) {
+			SlObject(&str, this->GetLoadDescription());
+		}
+	}
+
+	void LoadCheck(CompanyProperties *cprops) const override { this->Load(cprops); }
+};
+
 /* Save/load of companies */
 static const SaveLoad _company_desc[] = {
 	    SLE_VAR(CompanyProperties, name_2,          SLE_UINT32),
@@ -450,6 +483,9 @@ static const SaveLoad _company_desc[] = {
 	    SLE_VAR(CompanyProperties, president_name_2, SLE_UINT32),
 	SLE_CONDSSTR(CompanyProperties, president_name,  SLE_STR | SLF_ALLOW_CONTROL, SLV_84, SL_MAX_VERSION),
 
+	SLE_CONDVECTOR(CompanyProperties, allow_list, SLE_STR, SLV_COMPANY_ALLOW_LIST, SLV_COMPANY_ALLOW_LIST_V2),
+	SLEG_CONDSTRUCTLIST("allow_list", SlAllowListData, SLV_COMPANY_ALLOW_LIST_V2, SL_MAX_VERSION),
+
 	    SLE_VAR(CompanyProperties, face,            SLE_UINT32),
 
 	/* money was changed to a 64 bit field in savegame version 1. */
@@ -458,6 +494,7 @@ static const SaveLoad _company_desc[] = {
 
 	SLE_CONDVAR(CompanyProperties, current_loan,          SLE_VAR_I64 | SLE_FILE_I32,  SL_MIN_VERSION, SLV_65),
 	SLE_CONDVAR(CompanyProperties, current_loan,          SLE_INT64,                  SLV_65, SL_MAX_VERSION),
+	SLE_CONDVAR(CompanyProperties, max_loan,              SLE_INT64, SLV_MAX_LOAN_FOR_COMPANY, SL_MAX_VERSION),
 
 	    SLE_VAR(CompanyProperties, colour,                SLE_UINT8),
 	    SLE_VAR(CompanyProperties, money_fraction,        SLE_UINT8),
@@ -469,8 +506,6 @@ static const SaveLoad _company_desc[] = {
 	SLE_CONDVAR(CompanyProperties, last_build_coordinate, SLE_UINT32,                  SLV_6, SL_MAX_VERSION),
 	SLE_CONDVAR(CompanyProperties, inaugurated_year,      SLE_FILE_U8  | SLE_VAR_I32,  SL_MIN_VERSION, SLV_31),
 	SLE_CONDVAR(CompanyProperties, inaugurated_year,      SLE_INT32,                  SLV_31, SL_MAX_VERSION),
-
-	    SLE_ARR(CompanyProperties, share_owners,          SLE_UINT8, 4),
 
 	SLE_CONDVAR(CompanyProperties, num_valid_stat_ent,    SLE_UINT8,                   SL_MIN_VERSION, SLV_SAVELOAD_LIST_LENGTH),
 
@@ -518,7 +553,7 @@ struct PLYRChunkHandler : ChunkHandler {
 		while ((index = SlIterateArray()) != -1) {
 			Company *c = new (index) Company();
 			SlObject(c, slt);
-			_company_colours[index] = (Colours)c->colour;
+			_company_colours[index] = c->colour;
 		}
 	}
 
@@ -529,8 +564,8 @@ struct PLYRChunkHandler : ChunkHandler {
 
 		int index;
 		while ((index = SlIterateArray()) != -1) {
-			CompanyProperties *cprops = new CompanyProperties();
-			SlObject(cprops, slt);
+			std::unique_ptr<CompanyProperties> cprops = std::make_unique<CompanyProperties>();
+			SlObject(cprops.get(), slt);
 
 			/* We do not load old custom names */
 			if (IsSavegameVersionBefore(SLV_84)) {
@@ -550,7 +585,9 @@ struct PLYRChunkHandler : ChunkHandler {
 				cprops->name_1 = STR_GAME_SAVELOAD_NOT_AVAILABLE;
 			}
 
-			if (!_load_check_data.companies.Insert(index, cprops)) delete cprops;
+			if (_load_check_data.companies.count(index) == 0) {
+				_load_check_data.companies[index] = std::move(cprops);
+			}
 		}
 	}
 

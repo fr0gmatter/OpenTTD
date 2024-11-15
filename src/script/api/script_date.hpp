@@ -11,7 +11,7 @@
 #define SCRIPT_DATE_HPP
 
 #include "script_object.hpp"
-#include "../../date_type.h"
+#include "../../timer/timer_game_economy.h"
 
 /**
  * Class that handles all date related (calculation) functions.
@@ -23,6 +23,30 @@
  * @note Dates can be used to determine the number of days between
  *       two different moments in time because they count the number
  *       of days since the year 0.
+ *
+ * \anchor ScriptCalendarTime
+ * \b Calendar-Time
+ *
+ * Calendar time measures the technological progression in the game.
+ * \li The calendar date is shown in the status bar.
+ * \li The calendar date affects engine model introduction and expiration.
+ * \li Progression of calendar time can be slowed or even halted via game settings.
+ *
+ * Calendar time uses the Gregorian calendar with 365 or 366 days per year.
+ *
+ * \anchor ScriptEconomyTime
+ * \b Economy-Time
+ *
+ * Economy time measures the in-game time progression, while the game is not paused.
+ * \li Cargo production and consumption follows economy time.
+ * \li Recurring income and expenses follow economy time.
+ * \li Production and income statistics and balances are created per economy month/quarter/year.
+ *
+ * Depending on game settings economy time is represented differently:
+ * \li Calendar-based timekeeping: Economy- and calendar-time use the identical Gregorian calendar.
+ * \li Wallclock-based timekeeping: Economy- and calendar-time are separate.
+ *     Economy-time will use a 360 day calendar (12 months with 30 days each), which runs at a constant speed of one economy-month per realtime-minute.
+ *     Calendar-time will use a Gregorian calendar, which can be slowed to stopped via game settings.
  */
 class ScriptDate : public ScriptObject {
 public:
@@ -31,7 +55,7 @@ public:
 	 * compose valid date values for a known year, month and day.
 	 */
 	enum Date {
-		DATE_INVALID = ::INVALID_DATE, ///< A value representing an invalid date.
+		DATE_INVALID = ::EconomyTime::INVALID_DATE.base(), ///< A value representing an invalid date.
 	};
 
 	/**
@@ -55,21 +79,21 @@ public:
 	 * @param date The date to get the year of.
 	 * @return The year.
 	 */
-	static int32 GetYear(Date date);
+	static SQInteger GetYear(Date date);
 
 	/**
 	 * Get the month of the given date.
 	 * @param date The date to get the month of.
 	 * @return The month.
 	 */
-	static int32 GetMonth(Date date);
+	static SQInteger GetMonth(Date date);
 
 	/**
 	 * Get the day (of the month) of the given date.
 	 * @param date The date to get the day of.
 	 * @return The day.
 	 */
-	static int32 GetDayOfMonth(Date date);
+	static SQInteger GetDayOfMonth(Date date);
 
 	/**
 	 * Get the date given a year, month and day of month.
@@ -78,7 +102,7 @@ public:
 	 * @param day_of_month The day of month of the to-be determined date.
 	 * @return The date.
 	 */
-	static Date GetDate(int32 year, int32 month, int32 day_of_month);
+	static Date GetDate(SQInteger year, SQInteger month, SQInteger day_of_month);
 
 	/**
 	 * Get the time of the host system.
@@ -86,7 +110,7 @@ public:
 	 * @api -ai
 	 * @note This uses the clock of the host system, which can skew or be set back. Use with caution.
 	 */
-	static int32 GetSystemTime();
+	static SQInteger GetSystemTime();
 };
 
 #endif /* SCRIPT_DATE_HPP */

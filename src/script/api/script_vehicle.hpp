@@ -20,6 +20,8 @@ class ScriptVehicle : public ScriptObject {
 public:
 	/**
 	 * All vehicle related error messages.
+	 *
+	 * @see ScriptErrorType
 	 */
 	enum ErrorMessages {
 		/** Base for vehicle related errors */
@@ -97,8 +99,19 @@ public:
 	 * Checks whether the given vehicle is valid and owned by you.
 	 * @param vehicle_id The vehicle to check.
 	 * @return True if and only if the vehicle is valid.
+	 * @note Also returns true when the leading part of the vehicle is a wagon.
+	 *       Use IsPrimaryVehicle() to check for a valid vehicle with a leading engine.
 	 */
 	static bool IsValidVehicle(VehicleID vehicle_id);
+
+	/**
+	 * Checks whether this is a primary vehicle.
+	 * @param vehicle_id The vehicle to check.
+	 * @pre IsValidVehicle(vehicle_id).
+	 * @return True if the vehicle is a primary vehicle.
+	 * @note Returns false when the leading part of the vehicle is a wagon.
+	 */
+	static bool IsPrimaryVehicle(VehicleID vehicle_id);
 
 	/**
 	 * Get the number of wagons a vehicle has.
@@ -106,15 +119,15 @@ public:
 	 * @pre IsValidVehicle(vehicle_id).
 	 * @return The number of wagons the vehicle has.
 	 */
-	static int32 GetNumWagons(VehicleID vehicle_id);
+	static SQInteger GetNumWagons(VehicleID vehicle_id);
 
 	/**
 	 * Set the name of a vehicle.
 	 * @param vehicle_id The vehicle to set the name for.
 	 * @param name The name for the vehicle (can be either a raw string, or a ScriptText object).
-	 * @pre IsValidVehicle(vehicle_id).
-	 * @pre name != nullptr && len(name) != 0.
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @pre IsPrimaryVehicle(vehicle_id).
+	 * @pre name != null && len(name) != 0.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @exception ScriptError::ERR_NAME_IS_NOT_UNIQUE
 	 * @return True if and only if the name was changed.
 	 */
@@ -123,10 +136,10 @@ public:
 	/**
 	 * Get the name of a vehicle.
 	 * @param vehicle_id The vehicle to get the name of.
-	 * @pre IsValidVehicle(vehicle_id).
+	 * @pre IsPrimaryVehicle(vehicle_id).
 	 * @return The name the vehicle has.
 	 */
-	static char *GetName(VehicleID vehicle_id);
+	static std::optional<std::string> GetName(VehicleID vehicle_id);
 
 	/**
 	 * Get the owner of a vehicle.
@@ -161,24 +174,24 @@ public:
 	 * @pre wagon < GetNumWagons(vehicle_id).
 	 * @return The engine type the vehicle has.
 	 */
-	static EngineID GetWagonEngineType(VehicleID vehicle_id, int wagon);
+	static EngineID GetWagonEngineType(VehicleID vehicle_id, SQInteger wagon);
 
 	/**
 	 * Get the unitnumber of a vehicle.
 	 * @param vehicle_id The vehicle to get the unitnumber of.
-	 * @pre IsValidVehicle(vehicle_id).
+	 * @pre IsPrimaryVehicle(vehicle_id).
 	 * @return The unitnumber the vehicle has.
 	 */
-	static int32 GetUnitNumber(VehicleID vehicle_id);
+	static SQInteger GetUnitNumber(VehicleID vehicle_id);
 
 	/**
 	 * Get the current age of a vehicle.
 	 * @param vehicle_id The vehicle to get the age of.
 	 * @pre IsValidVehicle(vehicle_id).
-	 * @return The current age the vehicle has.
-	 * @note The age is in days.
+	 * @return The current age of the vehicle in calendar-days.
+	 * @see \ref ScriptCalendarTime
 	 */
-	static int32 GetAge(VehicleID vehicle_id);
+	static SQInteger GetAge(VehicleID vehicle_id);
 
 	/**
 	 * Get the current age of a second (or third, etc.) engine in a train vehicle.
@@ -186,39 +199,39 @@ public:
 	 * @param wagon The wagon in the vehicle to get the age of.
 	 * @pre IsValidVehicle(vehicle_id).
 	 * @pre wagon < GetNumWagons(vehicle_id).
-	 * @return The current age the vehicle has.
-	 * @note The age is in days.
+	 * @return The current age of the vehicle in calendar-days.
+	 * @see \ref ScriptCalendarTime
 	 */
-	static int32 GetWagonAge(VehicleID vehicle_id, int wagon);
+	static SQInteger GetWagonAge(VehicleID vehicle_id, SQInteger wagon);
 
 	/**
 	 * Get the maximum age of a vehicle.
 	 * @param vehicle_id The vehicle to get the age of.
-	 * @pre IsValidVehicle(vehicle_id).
-	 * @return The maximum age the vehicle has.
-	 * @note The age is in days.
+	 * @pre IsPrimaryVehicle(vehicle_id).
+	 * @return The maximum age for the vehicle in calendar-days.
+	 * @see \ref ScriptCalendarTime
 	 */
-	static int32 GetMaxAge(VehicleID vehicle_id);
+	static SQInteger GetMaxAge(VehicleID vehicle_id);
 
 	/**
 	 * Get the age a vehicle has left (maximum - current).
 	 * @param vehicle_id The vehicle to get the age of.
-	 * @pre IsValidVehicle(vehicle_id).
-	 * @return The age the vehicle has left.
-	 * @note The age is in days.
+	 * @pre IsPrimaryVehicle(vehicle_id).
+	 * @return The remaining age of the vehicle in calendar-days.
+	 * @see \ref ScriptCalendarTime
 	 */
-	static int32 GetAgeLeft(VehicleID vehicle_id);
+	static SQInteger GetAgeLeft(VehicleID vehicle_id);
 
 	/**
 	 * Get the current speed of a vehicle.
 	 * @param vehicle_id The vehicle to get the speed of.
-	 * @pre IsValidVehicle(vehicle_id).
+	 * @pre IsPrimaryVehicle(vehicle_id).
 	 * @return The current speed of the vehicle.
 	 * @note The speed is in OpenTTD's internal speed unit.
 	 *       This is mph / 1.6, which is roughly km/h.
 	 *       To get km/h multiply this number by 1.00584.
 	 */
-	static int32 GetCurrentSpeed(VehicleID vehicle_id);
+	static SQInteger GetCurrentSpeed(VehicleID vehicle_id);
 
 	/**
 	 * Get the current state of a vehicle.
@@ -231,27 +244,29 @@ public:
 	/**
 	 * Get the running cost of this vehicle.
 	 * @param vehicle_id The vehicle to get the running cost of.
-	 * @pre IsValidVehicle(vehicle_id).
-	 * @return The running cost of the vehicle per year.
-	 * @note Cost is per year; divide by 365 to get per day.
+	 * @pre IsPrimaryVehicle(vehicle_id).
+	 * @return The running cost of the vehicle per economy-year.
 	 * @note This is not equal to ScriptEngine::GetRunningCost for Trains, because
 	 *   wagons and second engines can add up in the calculation too.
+	 * @see \ref ScriptEconomyTime
 	 */
 	static Money GetRunningCost(VehicleID vehicle_id);
 
 	/**
 	 * Get the current profit of a vehicle.
 	 * @param vehicle_id The vehicle to get the profit of.
-	 * @pre IsValidVehicle(vehicle_id).
-	 * @return The current profit the vehicle has.
+	 * @pre IsPrimaryVehicle(vehicle_id).
+	 * @return The profit the vehicle has made this economy-year so far.
+	 * @see \ref ScriptEconomyTime
 	 */
 	static Money GetProfitThisYear(VehicleID vehicle_id);
 
 	/**
 	 * Get the profit of last year of a vehicle.
 	 * @param vehicle_id The vehicle to get the profit of.
-	 * @pre IsValidVehicle(vehicle_id).
-	 * @return The profit the vehicle had last year.
+	 * @pre IsPrimaryVehicle(vehicle_id).
+	 * @return The profit the vehicle made in the previous economy-year.
+	 * @see \ref ScriptEconomyTime
 	 */
 	static Money GetProfitLastYear(VehicleID vehicle_id);
 
@@ -305,7 +320,7 @@ public:
 	 * @pre The tile at depot has a depot that can build the engine and
 	 *   is owned by you.
 	 * @pre ScriptEngine::IsBuildable(engine_id).
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @exception ScriptVehicle::ERR_VEHICLE_TOO_MANY
 	 * @exception ScriptVehicle::ERR_VEHICLE_BUILD_DISABLED
 	 * @exception ScriptVehicle::ERR_VEHICLE_WRONG_DEPOT
@@ -331,7 +346,7 @@ public:
 	 *   is owned by you.
 	 * @pre ScriptEngine::IsBuildable(engine_id).
 	 * @pre ScriptCargo::IsValidCargo(cargo).
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @exception ScriptVehicle::ERR_VEHICLE_TOO_MANY
 	 * @exception ScriptVehicle::ERR_VEHICLE_BUILD_DISABLED
 	 * @exception ScriptVehicle::ERR_VEHICLE_WRONG_DEPOT
@@ -355,7 +370,7 @@ public:
 	 * @pre ScriptCargo::IsValidCargo(cargo).
 	 * @return The capacity the vehicle will have when refited.
 	 */
-	static int GetBuildWithRefitCapacity(TileIndex depot, EngineID engine_id, CargoID cargo);
+	static SQInteger GetBuildWithRefitCapacity(TileIndex depot, EngineID engine_id, CargoID cargo);
 
 	/**
 	 * Clones a vehicle at the given depot, copying or cloning its orders.
@@ -363,8 +378,8 @@ public:
 	 * @param vehicle_id The vehicle to use as example for the new vehicle.
 	 * @param share_orders Should the orders be copied or shared?
 	 * @pre The tile 'depot' has a depot on it, allowing 'vehicle_id'-type vehicles.
-	 * @pre IsValidVehicle(vehicle_id).
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @pre IsPrimaryVehicle(vehicle_id).
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @exception ScriptVehicle::ERR_VEHICLE_TOO_MANY
 	 * @exception ScriptVehicle::ERR_VEHICLE_BUILD_DISABLED
 	 * @exception ScriptVehicle::ERR_VEHICLE_WRONG_DEPOT
@@ -385,10 +400,10 @@ public:
 	 * @pre dest_vehicle_id == -1 || (IsValidVehicle(dest_vehicle_id) && dest_wagon < GetNumWagons(dest_vehicle_id)).
 	 * @pre GetVehicleType(source_vehicle_id) == VT_RAIL.
 	 * @pre dest_vehicle_id == -1 || GetVehicleType(dest_vehicle_id) == VT_RAIL.
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @return Whether or not moving the wagon succeeded.
 	 */
-	static bool MoveWagon(VehicleID source_vehicle_id, int source_wagon, int dest_vehicle_id, int dest_wagon);
+	static bool MoveWagon(VehicleID source_vehicle_id, SQInteger source_wagon, SQInteger dest_vehicle_id, SQInteger dest_wagon);
 
 	/**
 	 * Move a chain of wagons after another wagon.
@@ -401,10 +416,10 @@ public:
 	 * @pre dest_vehicle_id == -1 || (IsValidVehicle(dest_vehicle_id) && dest_wagon < GetNumWagons(dest_vehicle_id)).
 	 * @pre GetVehicleType(source_vehicle_id) == VT_RAIL.
 	 * @pre dest_vehicle_id == -1 || GetVehicleType(dest_vehicle_id) == VT_RAIL.
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @return Whether or not moving the wagons succeeded.
 	 */
-	static bool MoveWagonChain(VehicleID source_vehicle_id, int source_wagon, int dest_vehicle_id, int dest_wagon);
+	static bool MoveWagonChain(VehicleID source_vehicle_id, SQInteger source_wagon, SQInteger dest_vehicle_id, SQInteger dest_wagon);
 
 	/**
 	 * Gets the capacity of the given vehicle when refitted to the given cargo type.
@@ -416,7 +431,7 @@ public:
 	 * @pre The vehicle must be stopped in the depot.
 	 * @return The capacity the vehicle will have when refited.
 	 */
-	static int GetRefitCapacity(VehicleID vehicle_id, CargoID cargo);
+	static SQInteger GetRefitCapacity(VehicleID vehicle_id, CargoID cargo);
 
 	/**
 	 * Refits a vehicle to the given cargo type.
@@ -426,7 +441,7 @@ public:
 	 * @pre ScriptCargo::IsValidCargo(cargo).
 	 * @pre You must own the vehicle.
 	 * @pre The vehicle must be stopped in the depot.
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @exception ScriptVehicle::ERR_VEHICLE_CANNOT_REFIT
 	 * @exception ScriptVehicle::ERR_VEHICLE_IS_DESTROYED
 	 * @exception ScriptVehicle::ERR_VEHICLE_NOT_IN_DEPOT
@@ -440,7 +455,7 @@ public:
 	 * @pre IsValidVehicle(vehicle_id).
 	 * @pre You must own the vehicle.
 	 * @pre The vehicle must be stopped in the depot.
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @exception ScriptVehicle::ERR_VEHICLE_IS_DESTROYED
 	 * @exception ScriptVehicle::ERR_VEHICLE_NOT_IN_DEPOT
 	 * @return True if and only if the vehicle has been sold.
@@ -455,12 +470,12 @@ public:
 	 * @pre wagon < GetNumWagons(vehicle_id).
 	 * @pre You must own the vehicle.
 	 * @pre The vehicle must be stopped in the depot.
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @exception ScriptVehicle::ERR_VEHICLE_IS_DESTROYED
 	 * @exception ScriptVehicle::ERR_VEHICLE_NOT_IN_DEPOT
 	 * @return True if and only if the wagon has been sold.
 	 */
-	static bool SellWagon(VehicleID vehicle_id, int wagon);
+	static bool SellWagon(VehicleID vehicle_id, SQInteger wagon);
 
 	/**
 	 * Sells all wagons from the vehicle starting from a given position.
@@ -470,19 +485,19 @@ public:
 	 * @pre wagon < GetNumWagons(vehicle_id).
 	 * @pre You must own the vehicle.
 	 * @pre The vehicle must be stopped in the depot.
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @exception ScriptVehicle::ERR_VEHICLE_IS_DESTROYED
 	 * @exception ScriptVehicle::ERR_VEHICLE_NOT_IN_DEPOT
 	 * @return True if and only if the wagons have been sold.
 	 */
-	static bool SellWagonChain(VehicleID vehicle_id, int wagon);
+	static bool SellWagonChain(VehicleID vehicle_id, SQInteger wagon);
 
 	/**
 	 * Sends the given vehicle to a depot. If the vehicle has already been
 	 * sent to a depot it continues with its normal orders instead.
 	 * @param vehicle_id The vehicle to send to a depot.
-	 * @pre IsValidVehicle(vehicle_id).
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @pre IsPrimaryVehicle(vehicle_id).
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @exception ScriptVehicle::ERR_VEHICLE_CANNOT_SEND_TO_DEPOT
 	 * @return True if the current order was changed.
 	 */
@@ -492,8 +507,8 @@ public:
 	 * Sends the given vehicle to a depot for servicing. If the vehicle has
 	 * already been sent to a depot it continues with its normal orders instead.
 	 * @param vehicle_id The vehicle to send to a depot for servicing.
-	 * @pre IsValidVehicle(vehicle_id).
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @pre IsPrimaryVehicle(vehicle_id).
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @exception ScriptVehicle::ERR_VEHICLE_CANNOT_SEND_TO_DEPOT
 	 * @return True if the current order was changed.
 	 */
@@ -502,8 +517,8 @@ public:
 	/**
 	 * Starts or stops the given vehicle depending on the current state.
 	 * @param vehicle_id The vehicle to start/stop.
-	 * @pre IsValidVehicle(vehicle_id).
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @pre IsPrimaryVehicle(vehicle_id).
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @exception ScriptVehicle::ERR_VEHICLE_CANNOT_START_STOP
 	 * @exception (For aircraft only): ScriptVehicle::ERR_VEHICLE_IN_FLIGHT
 	 * @exception (For trains only): ScriptVehicle::ERR_VEHICLE_NO_POWER
@@ -514,9 +529,9 @@ public:
 	/**
 	 * Turn the given vehicle so it'll drive the other way.
 	 * @param vehicle_id The vehicle to turn.
-	 * @pre IsValidVehicle(vehicle_id).
+	 * @pre IsPrimaryVehicle(vehicle_id).
 	 * @pre GetVehicleType(vehicle_id) == VT_ROAD || GetVehicleType(vehicle_id) == VT_RAIL.
-	 * @game @pre Valid ScriptCompanyMode active in scope.
+	 * @game @pre ScriptCompanyMode::IsValid().
 	 * @return True if and only if the vehicle has started to turn.
 	 * @note Vehicles cannot always be reversed. For example busses and trucks need to be running
 	 *  and not be inside a depot.
@@ -531,7 +546,7 @@ public:
 	 * @pre ScriptCargo::IsValidCargo(cargo).
 	 * @return The maximum amount of the given cargo the vehicle can transport.
 	 */
-	static int32 GetCapacity(VehicleID vehicle_id, CargoID cargo);
+	static SQInteger GetCapacity(VehicleID vehicle_id, CargoID cargo);
 
 	/**
 	 * Get the length of a the total vehicle in 1/16's of a tile.
@@ -540,7 +555,7 @@ public:
 	 * @pre GetVehicleType(vehicle_id) == VT_ROAD || GetVehicleType(vehicle_id) == VT_RAIL.
 	 * @return The length of the engine.
 	 */
-	static int GetLength(VehicleID vehicle_id);
+	static SQInteger GetLength(VehicleID vehicle_id);
 
 	/**
 	 * Get the amount of a specific cargo the given vehicle is transporting.
@@ -550,11 +565,12 @@ public:
 	 * @pre ScriptCargo::IsValidCargo(cargo).
 	 * @return The amount of the given cargo the vehicle is currently transporting.
 	 */
-	static int32 GetCargoLoad(VehicleID vehicle_id, CargoID cargo);
+	static SQInteger GetCargoLoad(VehicleID vehicle_id, CargoID cargo);
 
 	/**
 	 * Get the group of a given vehicle.
 	 * @param vehicle_id The vehicle to get the group from.
+	 * @pre IsPrimaryVehicle(vehicle_id).
 	 * @return The group of the given vehicle.
 	 */
 	static GroupID GetGroupID(VehicleID vehicle_id);
@@ -571,7 +587,7 @@ public:
 	/**
 	 * Check if the vehicle has shared orders.
 	 * @param vehicle_id The vehicle to check.
-	 * @pre IsValidVehicle(vehicle_id).
+	 * @pre IsPrimaryVehicle(vehicle_id).
 	 * @return True if the vehicle has shared orders.
 	 */
 	static bool HasSharedOrders(VehicleID vehicle_id);
@@ -579,10 +595,10 @@ public:
 	/**
 	 * Get the current reliability of a vehicle.
 	 * @param vehicle_id The vehicle to check.
-	 * @pre IsValidVehicle(vehicle_id).
+	 * @pre IsPrimaryVehicle(vehicle_id).
 	 * @return The current reliability (0-100%).
 	 */
-	static int GetReliability(VehicleID vehicle_id);
+	static SQInteger GetReliability(VehicleID vehicle_id);
 
 	/**
 	 * Get the maximum allowed distance between two orders for a vehicle.
@@ -590,14 +606,14 @@ public:
 	 * map distances, you may use the result of this function to compare it
 	 * with the result of ScriptOrder::GetOrderDistance.
 	 * @param vehicle_id The vehicle to get the distance for.
-	 * @pre IsValidVehicle(vehicle_id).
+	 * @pre IsPrimaryVehicle(vehicle_id).
 	 * @return The maximum distance between two orders for this vehicle
 	 *         or 0 if the distance is unlimited.
 	 * @note   The unit of the order distances is unspecified and should
 	 *         not be compared with map distances
 	 * @see ScriptOrder::GetOrderDistance
 	 */
-	static uint GetMaximumOrderDistance(VehicleID vehicle_id);
+	static SQInteger GetMaximumOrderDistance(VehicleID vehicle_id);
 
 private:
 	/**
@@ -608,12 +624,12 @@ private:
 	/**
 	 * Internal function used by SellWagon(Chain).
 	 */
-	static bool _SellWagonInternal(VehicleID vehicle_id, int wagon, bool sell_attached_wagons);
+	static bool _SellWagonInternal(VehicleID vehicle_id, SQInteger wagon, bool sell_attached_wagons);
 
 	/**
 	 * Internal function used by MoveWagon(Chain).
 	 */
-	static bool _MoveWagonInternal(VehicleID source_vehicle_id, int source_wagon, bool move_attached_wagons, int dest_vehicle_id, int dest_wagon);
+	static bool _MoveWagonInternal(VehicleID source_vehicle_id, SQInteger source_wagon, bool move_attached_wagons, SQInteger dest_vehicle_id, SQInteger dest_wagon);
 };
 
 #endif /* SCRIPT_VEHICLE_HPP */

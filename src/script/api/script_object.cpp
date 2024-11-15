@@ -25,6 +25,21 @@
 
 #include "../../safeguards.h"
 
+void SimpleCountedObject::Release()
+{
+	int32_t res = --this->ref_count;
+	assert(res >= 0);
+	if (res == 0) {
+		try {
+			this->FinalRelease(); // may throw, for example ScriptTest/ExecMode
+		} catch (...) {
+			delete this;
+			throw;
+		}
+		delete this;
+	}
+}
+
 /**
  * Get the storage associated with the current ScriptInstance.
  * @return The storage.
@@ -82,20 +97,34 @@ ScriptObject::ActiveInstance::~ActiveInstance()
 	return GetStorage()->mode_instance;
 }
 
-/* static */ void ScriptObject::SetLastCommand(TileIndex tile, const CommandDataBuffer &data, Commands cmd)
+/* static */ void ScriptObject::SetDoCommandAsyncMode(ScriptAsyncModeProc *proc, ScriptObject *instance)
+{
+	GetStorage()->async_mode = proc;
+	GetStorage()->async_mode_instance = instance;
+}
+
+/* static */ ScriptAsyncModeProc *ScriptObject::GetDoCommandAsyncMode()
+{
+	return GetStorage()->async_mode;
+}
+
+/* static */ ScriptObject *ScriptObject::GetDoCommandAsyncModeInstance()
+{
+	return GetStorage()->async_mode_instance;
+}
+
+/* static */ void ScriptObject::SetLastCommand(const CommandDataBuffer &data, Commands cmd)
 {
 	ScriptStorage *s = GetStorage();
-	Debug(script, 6, "SetLastCommand company={:02d} tile={:06x} cmd={} data={}", s->root_company, tile, cmd, FormatArrayAsHex(data));
-	s->last_tile = tile;
+	Debug(script, 6, "SetLastCommand company={:02d} cmd={} data={}", s->root_company, cmd, FormatArrayAsHex(data));
 	s->last_data = data;
 	s->last_cmd = cmd;
 }
 
-/* static */ bool ScriptObject::CheckLastCommand(TileIndex tile, const CommandDataBuffer &data, Commands cmd)
+/* static */ bool ScriptObject::CheckLastCommand(const CommandDataBuffer &data, Commands cmd)
 {
 	ScriptStorage *s = GetStorage();
-	Debug(script, 6, "CheckLastCommand company={:02d} tile={:06x} cmd={} data={}", s->root_company, tile, cmd, FormatArrayAsHex(data));
-	if (s->last_tile != tile) return false;
+	Debug(script, 6, "CheckLastCommand company={:02d} cmd={} data={}", s->root_company, cmd, FormatArrayAsHex(data));
 	if (s->last_cmd != cmd) return false;
 	if (s->last_data != data) return false;
 	return true;
@@ -215,22 +244,19 @@ ScriptObject::ActiveInstance::~ActiveInstance()
 	return GetStorage()->event_data;
 }
 
-/* static */ void *&ScriptObject::GetLogPointer()
+/* static */ ScriptLogTypes::LogData &ScriptObject::GetLogData()
 {
 	return GetStorage()->log_data;
 }
 
-/* static */ char *ScriptObject::GetString(StringID string)
+/* static */ std::string ScriptObject::GetString(StringID string)
 {
-	char buffer[64];
-	::GetString(buffer, string, lastof(buffer));
-	::StrMakeValidInPlace(buffer, lastof(buffer), SVS_NONE);
-	return ::stredup(buffer);
+	return ::StrMakeValid(::GetString(string));
 }
 
 /* static */ void ScriptObject::SetCallbackVariable(int index, int value)
 {
-	if ((size_t)index >= GetStorage()->callback_value.size()) GetStorage()->callback_value.resize(index + 1);
+	if (static_cast<size_t>(index) >= GetStorage()->callback_value.size()) GetStorage()->callback_value.resize(index + 1);
 	GetStorage()->callback_value[index] = value;
 }
 
@@ -244,7 +270,7 @@ ScriptObject::ActiveInstance::~ActiveInstance()
 	return ScriptObject::GetActiveInstance()->GetDoCommandCallback();
 }
 
-std::tuple<bool, bool, bool> ScriptObject::DoCommandPrep()
+std::tuple<bool, bool, bool, bool> ScriptObject::DoCommandPrep()
 {
 	if (!ScriptObject::CanSuspend()) {
 		throw Script_FatalError("You are not allowed to execute any DoCommand (even indirect) in your constructor, Save(), Load(), and any valuator.");
@@ -253,17 +279,20 @@ std::tuple<bool, bool, bool> ScriptObject::DoCommandPrep()
 	/* Are we only interested in the estimate costs? */
 	bool estimate_only = GetDoCommandMode() != nullptr && !GetDoCommandMode()();
 
+	/* Should the command be executed asynchronously? */
+	bool asynchronous = GetDoCommandAsyncMode() != nullptr && GetDoCommandAsyncMode()();
+
 	bool networking = _networking && !_generating_world;
 
-	if (ScriptObject::GetCompany() != OWNER_DEITY && !::Company::IsValidID(ScriptObject::GetCompany())) {
+	if (!ScriptCompanyMode::IsDeity() && !ScriptCompanyMode::IsValid()) {
 		ScriptObject::SetLastError(ScriptError::ERR_PRECONDITION_INVALID_COMPANY);
-		return { true, estimate_only, networking };
+		return { true, estimate_only, asynchronous, networking };
 	}
 
-	return { false, estimate_only, networking };
+	return { false, estimate_only, asynchronous, networking };
 }
 
-bool ScriptObject::DoCommandProcessResult(const CommandCost &res, Script_SuspendCallbackProc *callback, bool estimate_only)
+bool ScriptObject::DoCommandProcessResult(const CommandCost &res, Script_SuspendCallbackProc *callback, bool estimate_only, bool asynchronous)
 {
 	/* Set the default callback to return a true/false result of the DoCommand */
 	if (callback == nullptr) callback = &ScriptInstance::DoCommandReturn;
@@ -287,8 +316,13 @@ bool ScriptObject::DoCommandProcessResult(const CommandCost &res, Script_Suspend
 	SetLastCost(res.GetCost());
 	SetLastCommandRes(true);
 
-	if (_generating_world) {
+	if (_generating_world || asynchronous) {
 		IncreaseDoCommandCosts(res.GetCost());
+		if (!_generating_world) {
+			/* Charge a nominal fee for asynchronously executed commands */
+			Squirrel *engine = ScriptObject::GetActiveInstance()->engine;
+			Squirrel::DecreaseOps(engine->GetVM(), 100);
+		}
 		if (callback != nullptr) {
 			/* Insert return value into to stack and throw a control code that
 			 * the return value in the stack should be used. */
@@ -310,4 +344,20 @@ bool ScriptObject::DoCommandProcessResult(const CommandCost &res, Script_Suspend
 	}
 
 	NOT_REACHED();
+}
+
+
+/* static */ Randomizer ScriptObject::random_states[OWNER_END];
+
+Randomizer &ScriptObject::GetRandomizer(Owner owner)
+{
+	return ScriptObject::random_states[owner];
+}
+
+void ScriptObject::InitializeRandomizers()
+{
+	Randomizer random = _random;
+	for (Owner owner = OWNER_BEGIN; owner < OWNER_END; owner++) {
+		ScriptObject::GetRandomizer(owner).SetSeed(random.Next());
+	}
 }

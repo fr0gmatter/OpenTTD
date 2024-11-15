@@ -10,12 +10,14 @@
 #include "../../stdafx.h"
 #include "../../debug.h"
 #include "../../blitter/factory.hpp"
-#include "../../core/alloc_func.hpp"
 #include "../../core/math_func.hpp"
+#include "../../core/mem_func.hpp"
+#include "../../error_func.h"
 #include "../../fileio_func.h"
-#include "../../fontdetection.h"
 #include "../../fontcache.h"
 #include "../../fontcache/truetypefontcache.h"
+#include "../../fontdetection.h"
+#include "../../library_loader.h"
 #include "../../string_func.h"
 #include "../../strings_func.h"
 #include "../../zoom_func.h"
@@ -30,249 +32,22 @@
 
 #include "safeguards.h"
 
-#ifdef WITH_FREETYPE
-
-#include <ft2build.h>
-#include FT_FREETYPE_H
-
-extern FT_Library _library;
-
-/**
- * Get the short DOS 8.3 format for paths.
- * FreeType doesn't support Unicode filenames and Windows' fopen (as used
- * by FreeType) doesn't support UTF-8 filenames. So we have to convert the
- * filename into something that isn't UTF-8 but represents the Unicode file
- * name. This is the short DOS 8.3 format. This does not contain any
- * characters that fopen doesn't support.
- * @param long_path the path in system encoding.
- * @return the short path in ANSI (ASCII).
- */
-static const char *GetShortPath(const wchar_t *long_path)
-{
-	static char short_path[MAX_PATH];
-	wchar_t short_path_w[MAX_PATH];
-	GetShortPathName(long_path, short_path_w, lengthof(short_path_w));
-	WideCharToMultiByte(CP_ACP, 0, short_path_w, -1, short_path, lengthof(short_path), nullptr, nullptr);
-	return short_path;
-}
-
-/* Get the font file to be loaded into Freetype by looping the registry
- * location where windows lists all installed fonts. Not very nice, will
- * surely break if the registry path changes, but it works. Much better
- * solution would be to use CreateFont, and extract the font data from it
- * by GetFontData. The problem with this is that the font file needs to be
- * kept in memory then until the font is no longer needed. This could mean
- * an additional memory usage of 30MB (just for fonts!) when using an eastern
- * font for all font sizes */
-static const wchar_t *FONT_DIR_NT = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts";
-FT_Error GetFontByFaceName(const char *font_name, FT_Face *face)
-{
-	FT_Error err = FT_Err_Cannot_Open_Resource;
-	HKEY hKey;
-	LONG ret;
-	wchar_t vbuffer[MAX_PATH], dbuffer[256];
-	wchar_t *pathbuf;
-	const char *font_path;
-	uint index;
-	size_t path_len;
-
-	ret = RegOpenKeyEx(HKEY_LOCAL_MACHINE, FONT_DIR_NT, 0, KEY_READ, &hKey);
-
-	if (ret != ERROR_SUCCESS) {
-		Debug(fontcache, 0, "Cannot open registry key HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts");
-		return err;
-	}
-
-	/* Convert font name to file system encoding. */
-	wchar_t *font_namep = wcsdup(OTTD2FS(font_name).c_str());
-
-	for (index = 0;; index++) {
-		wchar_t *s;
-		DWORD vbuflen = lengthof(vbuffer);
-		DWORD dbuflen = lengthof(dbuffer);
-
-		ret = RegEnumValue(hKey, index, vbuffer, &vbuflen, nullptr, nullptr, (byte *)dbuffer, &dbuflen);
-		if (ret != ERROR_SUCCESS) goto registry_no_font_found;
-
-		/* The font names in the registry are of the following 3 forms:
-		 * - ADMUI3.fon
-		 * - Book Antiqua Bold (TrueType)
-		 * - Batang & BatangChe & Gungsuh & GungsuhChe (TrueType)
-		 * We will strip the font-type '()' if any and work with the font name
-		 * itself, which must match exactly; if...
-		 * TTC files, font files which contain more than one font are separated
-		 * by '&'. Our best bet will be to do substr match for the fontname
-		 * and then let FreeType figure out which index to load */
-		s = wcschr(vbuffer, L'(');
-		if (s != nullptr) s[-1] = '\0';
-
-		if (wcschr(vbuffer, L'&') == nullptr) {
-			if (wcsicmp(vbuffer, font_namep) == 0) break;
-		} else {
-			if (wcsstr(vbuffer, font_namep) != nullptr) break;
-		}
-	}
-
-	if (!SUCCEEDED(SHGetFolderPath(nullptr, CSIDL_FONTS, nullptr, SHGFP_TYPE_CURRENT, vbuffer))) {
-		Debug(fontcache, 0, "SHGetFolderPath cannot return fonts directory");
-		goto folder_error;
-	}
-
-	/* Some fonts are contained in .ttc files, TrueType Collection fonts. These
-	 * contain multiple fonts inside this single file. GetFontData however
-	 * returns the whole file, so we need to check each font inside to get the
-	 * proper font. */
-	path_len = wcslen(vbuffer) + wcslen(dbuffer) + 2; // '\' and terminating nul.
-	pathbuf = AllocaM(wchar_t, path_len);
-	_snwprintf(pathbuf, path_len, L"%s\\%s", vbuffer, dbuffer);
-
-	/* Convert the path into something that FreeType understands. */
-	font_path = GetShortPath(pathbuf);
-
-	index = 0;
-	do {
-		err = FT_New_Face(_library, font_path, index, face);
-		if (err != FT_Err_Ok) break;
-
-		if (strncasecmp(font_name, (*face)->family_name, strlen((*face)->family_name)) == 0) break;
-		/* Try english name if font name failed */
-		if (strncasecmp(font_name + strlen(font_name) + 1, (*face)->family_name, strlen((*face)->family_name)) == 0) break;
-		err = FT_Err_Cannot_Open_Resource;
-
-	} while ((FT_Long)++index != (*face)->num_faces);
-
-
-folder_error:
-registry_no_font_found:
-	free(font_namep);
-	RegCloseKey(hKey);
-	return err;
-}
-
-/**
- * Fonts can have localised names and when the system locale is the same as
- * one of those localised names Windows will always return that localised name
- * instead of allowing to get the non-localised (English US) name of the font.
- * This will later on give problems as freetype uses the non-localised name of
- * the font and we need to compare based on that name.
- * Windows furthermore DOES NOT have an API to get the non-localised name nor
- * can we override the system locale. This means that we have to actually read
- * the font itself to gather the font name we want.
- * Based on: http://blogs.msdn.com/michkap/archive/2006/02/13/530814.aspx
- * @param logfont the font information to get the english name of.
- * @return the English name (if it could be found).
- */
-static std::string GetEnglishFontName(const ENUMLOGFONTEX *logfont)
-{
-	static char font_name[MAX_PATH];
-	const char *ret_font_name = nullptr;
-	uint pos = 0;
-	HDC dc;
-	HGDIOBJ oldfont;
-	byte *buf;
-	DWORD dw;
-	uint16 format, count, stringOffset, platformId, encodingId, languageId, nameId, length, offset;
-
-	HFONT font = CreateFontIndirect(&logfont->elfLogFont);
-	if (font == nullptr) goto err1;
-
-	dc = GetDC(nullptr);
-	oldfont = SelectObject(dc, font);
-	dw = GetFontData(dc, 'eman', 0, nullptr, 0);
-	if (dw == GDI_ERROR) goto err2;
-
-	buf = MallocT<byte>(dw);
-	dw = GetFontData(dc, 'eman', 0, buf, dw);
-	if (dw == GDI_ERROR) goto err3;
-
-	format = buf[pos++] << 8;
-	format += buf[pos++];
-	assert(format == 0);
-	count = buf[pos++] << 8;
-	count += buf[pos++];
-	stringOffset = buf[pos++] << 8;
-	stringOffset += buf[pos++];
-	for (uint i = 0; i < count; i++) {
-		platformId = buf[pos++] << 8;
-		platformId += buf[pos++];
-		encodingId = buf[pos++] << 8;
-		encodingId += buf[pos++];
-		languageId = buf[pos++] << 8;
-		languageId += buf[pos++];
-		nameId = buf[pos++] << 8;
-		nameId += buf[pos++];
-		if (nameId != 1) {
-			pos += 4; // skip length and offset
-			continue;
-		}
-		length = buf[pos++] << 8;
-		length += buf[pos++];
-		offset = buf[pos++] << 8;
-		offset += buf[pos++];
-
-		/* Don't buffer overflow */
-		length = std::min<uint16>(length, MAX_PATH - 1);
-		for (uint j = 0; j < length; j++) font_name[j] = buf[stringOffset + offset + j];
-		font_name[length] = '\0';
-
-		if ((platformId == 1 && languageId == 0) ||      // Macintosh English
-			(platformId == 3 && languageId == 0x0409)) { // Microsoft English (US)
-			ret_font_name = font_name;
-			break;
-		}
-	}
-
-err3:
-	free(buf);
-err2:
-	SelectObject(dc, oldfont);
-	ReleaseDC(nullptr, dc);
-	DeleteObject(font);
-err1:
-	return ret_font_name == nullptr ? FS2OTTD((const wchar_t *)logfont->elfFullName) : std::string(ret_font_name);
-}
-#endif /* WITH_FREETYPE */
-
-class FontList {
-protected:
-	wchar_t **fonts;
-	uint items;
-	uint capacity;
-
-public:
-	FontList() : fonts(nullptr), items(0), capacity(0) { };
-
-	~FontList() {
-		if (this->fonts == nullptr) return;
-
-		for (uint i = 0; i < this->items; i++) {
-			free(this->fonts[i]);
-		}
-
-		free(this->fonts);
-	}
-
-	bool Add(const wchar_t *font) {
-		for (uint i = 0; i < this->items; i++) {
-			if (wcscmp(this->fonts[i], font) == 0) return false;
-		}
-
-		if (this->items == this->capacity) {
-			this->capacity += 10;
-			this->fonts = ReallocT(this->fonts, this->capacity);
-		}
-
-		this->fonts[this->items++] = wcsdup(font);
-
-		return true;
-	}
-};
-
 struct EFCParam {
 	FontCacheSettings *settings;
 	LOCALESIGNATURE  locale;
 	MissingGlyphSearcher *callback;
-	FontList fonts;
+	std::vector<std::wstring> fonts;
+
+	bool Add(const std::wstring_view &font)
+	{
+		for (const auto &entry : this->fonts) {
+			if (font.compare(entry) == 0) return false;
+		}
+
+		this->fonts.emplace_back(font);
+
+		return true;
+	}
 };
 
 static int CALLBACK EnumFontCallback(const ENUMLOGFONTEX *logfont, const NEWTEXTMETRICEX *metric, DWORD type, LPARAM lParam)
@@ -280,7 +55,7 @@ static int CALLBACK EnumFontCallback(const ENUMLOGFONTEX *logfont, const NEWTEXT
 	EFCParam *info = (EFCParam *)lParam;
 
 	/* Skip duplicates */
-	if (!info->fonts.Add((const wchar_t *)logfont->elfFullName)) return 1;
+	if (!info->Add(logfont->elfFullName)) return 1;
 	/* Only use TrueType fonts */
 	if (!(type & TRUETYPE_FONTTYPE)) return 1;
 	/* Don't use SYMBOL fonts */
@@ -289,57 +64,18 @@ static int CALLBACK EnumFontCallback(const ENUMLOGFONTEX *logfont, const NEWTEXT
 	if (info->callback->Monospace() && (logfont->elfLogFont.lfPitchAndFamily & (FF_MODERN | FIXED_PITCH)) != (FF_MODERN | FIXED_PITCH)) return 1;
 
 	/* The font has to have at least one of the supported locales to be usable. */
-	if ((metric->ntmFontSig.fsCsb[0] & info->locale.lsCsbSupported[0]) == 0 && (metric->ntmFontSig.fsCsb[1] & info->locale.lsCsbSupported[1]) == 0) {
-		/* On win9x metric->ntmFontSig seems to contain garbage. */
-		FONTSIGNATURE fs;
-		memset(&fs, 0, sizeof(fs));
-		HFONT font = CreateFontIndirect(&logfont->elfLogFont);
-		if (font != nullptr) {
-			HDC dc = GetDC(nullptr);
-			HGDIOBJ oldfont = SelectObject(dc, font);
-			GetTextCharsetInfo(dc, &fs, 0);
-			SelectObject(dc, oldfont);
-			ReleaseDC(nullptr, dc);
-			DeleteObject(font);
-		}
-		if ((fs.fsCsb[0] & info->locale.lsCsbSupported[0]) == 0 && (fs.fsCsb[1] & info->locale.lsCsbSupported[1]) == 0) return 1;
-	}
+	if ((metric->ntmFontSig.fsCsb[0] & info->locale.lsCsbSupported[0]) == 0 && (metric->ntmFontSig.fsCsb[1] & info->locale.lsCsbSupported[1]) == 0) return 1;
 
 	char font_name[MAX_PATH];
-	convert_from_fs((const wchar_t *)logfont->elfFullName, font_name, lengthof(font_name));
-
-#ifdef WITH_FREETYPE
-	/* Add english name after font name */
-	std::string english_name = GetEnglishFontName(logfont);
-	strecpy(font_name + strlen(font_name) + 1, english_name.c_str(), lastof(font_name));
-
-	/* Check whether we can actually load the font. */
-	bool ft_init = _library != nullptr;
-	bool found = false;
-	FT_Face face;
-	/* Init FreeType if needed. */
-	if ((ft_init || FT_Init_FreeType(&_library) == FT_Err_Ok) && GetFontByFaceName(font_name, &face) == FT_Err_Ok) {
-		FT_Done_Face(face);
-		found = true;
-	}
-	if (!ft_init) {
-		/* Uninit FreeType if we did the init. */
-		FT_Done_FreeType(_library);
-		_library = nullptr;
-	}
-
-	if (!found) return 1;
-#else
-	const char *english_name = font_name;
-#endif /* WITH_FREETYPE */
+	convert_from_fs(logfont->elfFullName, font_name);
 
 	info->callback->SetFontNames(info->settings, font_name, &logfont->elfLogFont);
 	if (info->callback->FindMissingGlyphs()) return 1;
-	Debug(fontcache, 1, "Fallback font: {} ({})", font_name, english_name);
+	Debug(fontcache, 1, "Fallback font: {}", font_name);
 	return 0; // stop enumerating
 }
 
-bool SetFallbackFont(FontCacheSettings *settings, const char *language_isocode, int winlangid, MissingGlyphSearcher *callback)
+bool SetFallbackFont(FontCacheSettings *settings, const std::string &, int winlangid, MissingGlyphSearcher *callback)
 {
 	Debug(fontcache, 1, "Trying fallback fonts");
 	EFCParam langInfo;
@@ -364,10 +100,6 @@ bool SetFallbackFont(FontCacheSettings *settings, const char *language_isocode, 
 }
 
 
-#ifndef ANTIALIASED_QUALITY
-#define ANTIALIASED_QUALITY     4
-#endif
-
 /**
  * Create a new Win32FontCache.
  * @param fs      The font size that is going to be cached.
@@ -377,7 +109,7 @@ bool SetFallbackFont(FontCacheSettings *settings, const char *language_isocode, 
 Win32FontCache::Win32FontCache(FontSize fs, const LOGFONT &logfont, int pixels) : TrueTypeFontCache(fs, pixels), logfont(logfont)
 {
 	this->dc = CreateCompatibleDC(nullptr);
-	this->SetFontSize(fs, pixels);
+	this->SetFontSize(pixels);
 }
 
 Win32FontCache::~Win32FontCache()
@@ -387,7 +119,7 @@ Win32FontCache::~Win32FontCache()
 	DeleteObject(this->font);
 }
 
-void Win32FontCache::SetFontSize(FontSize fs, int pixels)
+void Win32FontCache::SetFontSize(int pixels)
 {
 	if (pixels == 0) {
 		/* Try to determine a good height based on the minimal height recommended by the font. */
@@ -399,7 +131,7 @@ void Win32FontCache::SetFontSize(FontSize fs, int pixels)
 			HGDIOBJ old = SelectObject(this->dc, temp);
 
 			UINT size = GetOutlineTextMetrics(this->dc, 0, nullptr);
-			LPOUTLINETEXTMETRIC otm = (LPOUTLINETEXTMETRIC)AllocaM(BYTE, size);
+			LPOUTLINETEXTMETRIC otm = (LPOUTLINETEXTMETRIC)new BYTE[size];
 			GetOutlineTextMetrics(this->dc, size, otm);
 
 			/* Font height is minimum height plus the difference between the default
@@ -408,6 +140,7 @@ void Win32FontCache::SetFontSize(FontSize fs, int pixels)
 			/* Clamp() is not used as scaled_height could be greater than MAX_FONT_SIZE, which is not permitted in Clamp(). */
 			pixels = std::min(std::max(std::min<int>(otm->otmusMinimumPPEM, MAX_FONT_MIN_REC_SIZE) + diff, scaled_height), MAX_FONT_SIZE);
 
+			delete[] (BYTE*)otm;
 			SelectObject(dc, old);
 			DeleteObject(temp);
 		}
@@ -419,7 +152,8 @@ void Win32FontCache::SetFontSize(FontSize fs, int pixels)
 	/* Create GDI font handle. */
 	this->logfont.lfHeight = -pixels;
 	this->logfont.lfWidth = 0;
-	this->logfont.lfOutPrecision = ANTIALIASED_QUALITY;
+	this->logfont.lfOutPrecision = OUT_TT_ONLY_PRECIS;
+	this->logfont.lfQuality = ANTIALIASED_QUALITY;
 
 	if (this->font != nullptr) {
 		SelectObject(dc, this->old_font);
@@ -430,10 +164,9 @@ void Win32FontCache::SetFontSize(FontSize fs, int pixels)
 
 	/* Query the font metrics we needed. */
 	UINT otmSize = GetOutlineTextMetrics(this->dc, 0, nullptr);
-	POUTLINETEXTMETRIC otm = (POUTLINETEXTMETRIC)AllocaM(BYTE, otmSize);
+	POUTLINETEXTMETRIC otm = (POUTLINETEXTMETRIC)new BYTE[otmSize];
 	GetOutlineTextMetrics(this->dc, otmSize, otm);
 
-	this->units_per_em = otm->otmEMSquare;
 	this->ascender = otm->otmTextMetrics.tmAscent;
 	this->descender = otm->otmTextMetrics.tmDescent;
 	this->height = this->ascender + this->descender;
@@ -443,6 +176,7 @@ void Win32FontCache::SetFontSize(FontSize fs, int pixels)
 	this->fontname = FS2OTTD((LPWSTR)((BYTE *)otm + (ptrdiff_t)otm->otmpFaceName));
 
 	Debug(fontcache, 2, "Loaded font '{}' with size {}", this->fontname, pixels);
+	delete[] (BYTE*)otm;
 }
 
 /**
@@ -451,7 +185,7 @@ void Win32FontCache::SetFontSize(FontSize fs, int pixels)
 void Win32FontCache::ClearFontCache()
 {
 	/* GUI scaling might have changed, determine font size anew if it was automatically selected. */
-	if (this->font != nullptr) this->SetFontSize(this->fs, this->req_size);
+	if (this->font != nullptr) this->SetFontSize(this->req_size);
 
 	this->TrueTypeFontCache::ClearFontCache();
 }
@@ -461,22 +195,9 @@ void Win32FontCache::ClearFontCache()
 	GLYPHMETRICS gm;
 	MAT2 mat = { {0, 1}, {0, 0}, {0, 0}, {0, 1} };
 
-	/* Make a guess for the needed memory size. */
-	DWORD size = this->glyph_size.cy * Align(aa ? this->glyph_size.cx : std::max(this->glyph_size.cx / 8l, 1l), 4); // Bitmap data is DWORD-aligned rows.
-	byte *bmp = AllocaM(byte, size);
-	size = GetGlyphOutline(this->dc, key, GGO_GLYPH_INDEX | (aa ? GGO_GRAY8_BITMAP : GGO_BITMAP), &gm, size, bmp, &mat);
-
-	if (size == GDI_ERROR) {
-		/* No dice with the guess. First query size of needed glyph memory, then allocate the
-		 * memory and query again. This dance is necessary as some glyphs will only render with
-		 * the exact matching size; e.g. the space glyph has no pixels and must be requested
-		 * with size == 0, anything else fails. Unfortunately, a failed call doesn't return any
-		 * info about the size and thus the triple GetGlyphOutline()-call. */
-		size = GetGlyphOutline(this->dc, key, GGO_GLYPH_INDEX | (aa ? GGO_GRAY8_BITMAP : GGO_BITMAP), &gm, 0, nullptr, &mat);
-		if (size == GDI_ERROR) usererror("Unable to render font glyph");
-		bmp = AllocaM(byte, size);
-		GetGlyphOutline(this->dc, key, GGO_GLYPH_INDEX | (aa ? GGO_GRAY8_BITMAP : GGO_BITMAP), &gm, size, bmp, &mat);
-	}
+	/* Call GetGlyphOutline with zero size initially to get required memory size. */
+	DWORD size = GetGlyphOutline(this->dc, key, GGO_GLYPH_INDEX | (aa ? GGO_GRAY8_BITMAP : GGO_BITMAP), &gm, 0, nullptr, &mat);
+	if (size == GDI_ERROR) UserError("Unable to render font glyph");
 
 	/* Add 1 scaled pixel for the shadow on the medium font. Our sprite must be at least 1x1 pixel. */
 	uint shadow = (this->fs == FS_NORMAL) ? ScaleGUITrad(1) : 0;
@@ -484,12 +205,17 @@ void Win32FontCache::ClearFontCache()
 	uint height = std::max(1U, (uint)gm.gmBlackBoxY + shadow);
 
 	/* Limit glyph size to prevent overflows later on. */
-	if (width > MAX_GLYPH_DIM || height > MAX_GLYPH_DIM) usererror("Font glyph is too large");
+	if (width > MAX_GLYPH_DIM || height > MAX_GLYPH_DIM) UserError("Font glyph is too large");
+
+	/* Call GetGlyphOutline again with size to actually render the glyph. */
+	uint8_t *bmp = this->render_buffer.Allocate(size);
+	GetGlyphOutline(this->dc, key, GGO_GLYPH_INDEX | (aa ? GGO_GRAY8_BITMAP : GGO_BITMAP), &gm, size, bmp, &mat);
 
 	/* GDI has rendered the glyph, now we allocate a sprite and copy the image into it. */
-	SpriteLoader::Sprite sprite;
-	sprite.AllocateData(ZOOM_LVL_NORMAL, width * height);
-	sprite.type = ST_FONT;
+	SpriteLoader::SpriteCollection spritecollection;
+	SpriteLoader::Sprite &sprite = spritecollection[ZOOM_LVL_MIN];
+	sprite.AllocateData(ZOOM_LVL_MIN, width * height);
+	sprite.type = SpriteType::Font;
 	sprite.colours = (aa ? SCC_PAL | SCC_ALPHA : SCC_PAL);
 	sprite.width = width;
 	sprite.height = height;
@@ -526,22 +252,19 @@ void Win32FontCache::ClearFontCache()
 		}
 	}
 
+	UniquePtrSpriteAllocator allocator;
+	BlitterFactory::GetCurrentBlitter()->Encode(spritecollection, allocator);
+
 	GlyphEntry new_glyph;
-	new_glyph.sprite = BlitterFactory::GetCurrentBlitter()->Encode(&sprite, SimpleSpriteAlloc);
+	new_glyph.data = std::move(allocator.data);
 	new_glyph.width = gm.gmCellIncX;
 
-	this->SetGlyphPtr(key, &new_glyph);
-
-	return new_glyph.sprite;
+	return this->SetGlyphPtr(key, std::move(new_glyph)).GetSprite();
 }
 
-/* virtual */ GlyphID Win32FontCache::MapCharToGlyph(WChar key)
+/* virtual */ GlyphID Win32FontCache::MapCharToGlyph(char32_t key, bool allow_fallback)
 {
 	assert(IsPrintable(key));
-
-	if (key >= SCC_SPRITE_START && key <= SCC_SPRITE_END) {
-		return this->parent->MapCharToGlyph(key);
-	}
 
 	/* Convert characters outside of the BMP into surrogate pairs. */
 	WCHAR chars[2];
@@ -555,24 +278,71 @@ void Win32FontCache::ClearFontCache()
 	WORD glyphs[2] = { 0, 0 };
 	GetGlyphIndicesW(this->dc, chars, key >= 0x010000U ? 2 : 1, glyphs, GGI_MARK_NONEXISTING_GLYPHS);
 
-	return glyphs[0] != 0xFFFF ? glyphs[0] : 0;
+	if (glyphs[0] != 0xFFFF) return glyphs[0];
+	return allow_fallback && key >= SCC_SPRITE_START && key <= SCC_SPRITE_END ? this->parent->MapCharToGlyph(key) : 0;
 }
 
-/* virtual */ const void *Win32FontCache::InternalGetFontTable(uint32 tag, size_t &length)
-{
-	DWORD len = GetFontData(this->dc, tag, 0, nullptr, 0);
 
-	void *result = nullptr;
-	if (len != GDI_ERROR && len > 0) {
-		result = MallocT<BYTE>(len);
-		GetFontData(this->dc, tag, 0, result, len);
+static bool TryLoadFontFromFile(const std::string &font_name, LOGFONT &logfont)
+{
+	wchar_t fontPath[MAX_PATH] = {};
+
+	/* See if this is an absolute path. */
+	if (FileExists(font_name)) {
+		convert_to_fs(font_name, fontPath);
+	} else {
+		/* Scan the search-paths to see if it can be found. */
+		std::string full_font = FioFindFullPath(BASE_DIR, font_name);
+		if (!full_font.empty()) {
+			convert_to_fs(font_name, fontPath);
+		}
 	}
 
-	length = len;
-	return result;
+	if (fontPath[0] != 0) {
+		if (AddFontResourceEx(fontPath, FR_PRIVATE, 0) != 0) {
+			/* Try a nice little undocumented function first for getting the internal font name.
+			 * Some documentation is found at: http://www.undocprint.org/winspool/getfontresourceinfo */
+			static LibraryLoader _gdi32("gdi32.dll");
+			typedef BOOL(WINAPI *PFNGETFONTRESOURCEINFO)(LPCTSTR, LPDWORD, LPVOID, DWORD);
+			static PFNGETFONTRESOURCEINFO GetFontResourceInfo = _gdi32.GetFunction("GetFontResourceInfoW");
+
+			if (GetFontResourceInfo != nullptr) {
+				/* Try to query an array of LOGFONTs that describe the file. */
+				DWORD len = 0;
+				if (GetFontResourceInfo(fontPath, &len, nullptr, 2) && len >= sizeof(LOGFONT)) {
+					LOGFONT *buf = (LOGFONT *)new uint8_t[len];
+					if (GetFontResourceInfo(fontPath, &len, buf, 2)) {
+						logfont = *buf; // Just use first entry.
+					}
+					delete[](uint8_t *)buf;
+				}
+			}
+
+			/* No dice yet. Use the file name as the font face name, hoping it matches. */
+			if (logfont.lfFaceName[0] == 0) {
+				wchar_t fname[_MAX_FNAME];
+				_wsplitpath(fontPath, nullptr, nullptr, fname, nullptr);
+
+				wcsncpy_s(logfont.lfFaceName, lengthof(logfont.lfFaceName), fname, _TRUNCATE);
+				logfont.lfWeight = strcasestr(font_name.c_str(), " bold") != nullptr || strcasestr(font_name.c_str(), "-bold") != nullptr ? FW_BOLD : FW_NORMAL; // Poor man's way to allow selecting bold fonts.
+			}
+		}
+	}
+
+	return logfont.lfFaceName[0] != 0;
 }
 
+static void LoadWin32Font(FontSize fs, const LOGFONT &logfont, uint size, const char *font_name)
+{
+	HFONT font = CreateFontIndirect(&logfont);
+	if (font == nullptr) {
+		ShowInfo("Unable to use '{}' for {} font, Win32 reported error 0x{:X}, using sprite font instead", font_name, FontSizeToName(fs), GetLastError());
+		return;
+	}
+	DeleteObject(font);
 
+	new Win32FontCache(fs, logfont, size);
+}
 /**
  * Loads the GDI font.
  * If a GDI font description is present, e.g. from the automatic font
@@ -583,9 +353,10 @@ void LoadWin32Font(FontSize fs)
 {
 	FontCacheSubSetting *settings = GetFontCacheSubSetting(fs);
 
-	if (settings->font.empty()) return;
+	std::string font = GetFontCacheFontName(fs);
+	if (font.empty()) return;
 
-	const char *font_name = settings->font.c_str();
+	const char *font_name = font.c_str();
 	LOGFONT logfont;
 	MemSetT(&logfont, 0);
 	logfont.lfPitchAndFamily = fs == FS_MONO ? FIXED_PITCH : VARIABLE_PITCH;
@@ -597,64 +368,15 @@ void LoadWin32Font(FontSize fs)
 		logfont = *(const LOGFONT *)settings->os_handle;
 	} else if (strchr(font_name, '.') != nullptr) {
 		/* Might be a font file name, try load it. */
-
-		wchar_t fontPath[MAX_PATH] = {};
-
-		/* See if this is an absolute path. */
-		if (FileExists(settings->font)) {
-			convert_to_fs(font_name, fontPath, lengthof(fontPath));
-		} else {
-			/* Scan the search-paths to see if it can be found. */
-			std::string full_font = FioFindFullPath(BASE_DIR, font_name);
-			if (!full_font.empty()) {
-				convert_to_fs(font_name, fontPath, lengthof(fontPath));
-			}
-		}
-
-		if (fontPath[0] != 0) {
-			if (AddFontResourceEx(fontPath, FR_PRIVATE, 0) != 0) {
-				/* Try a nice little undocumented function first for getting the internal font name.
-				 * Some documentation is found at: http://www.undocprint.org/winspool/getfontresourceinfo */
-				static DllLoader _gdi32(L"gdi32.dll");
-				typedef BOOL(WINAPI *PFNGETFONTRESOURCEINFO)(LPCTSTR, LPDWORD, LPVOID, DWORD);
-				static PFNGETFONTRESOURCEINFO GetFontResourceInfo = _gdi32.GetProcAddress("GetFontResourceInfoW");
-
-				if (GetFontResourceInfo != nullptr) {
-					/* Try to query an array of LOGFONTs that describe the file. */
-					DWORD len = 0;
-					if (GetFontResourceInfo(fontPath, &len, nullptr, 2) && len >= sizeof(LOGFONT)) {
-						LOGFONT *buf = (LOGFONT *)AllocaM(byte, len);
-						if (GetFontResourceInfo(fontPath, &len, buf, 2)) {
-							logfont = *buf; // Just use first entry.
-						}
-					}
-				}
-
-				/* No dice yet. Use the file name as the font face name, hoping it matches. */
-				if (logfont.lfFaceName[0] == 0) {
-					wchar_t fname[_MAX_FNAME];
-					_wsplitpath(fontPath, nullptr, nullptr, fname, nullptr);
-
-					wcsncpy_s(logfont.lfFaceName, lengthof(logfont.lfFaceName), fname, _TRUNCATE);
-					logfont.lfWeight = strcasestr(font_name, " bold") != nullptr || strcasestr(font_name, "-bold") != nullptr ? FW_BOLD : FW_NORMAL; // Poor man's way to allow selecting bold fonts.
-				}
-			} else {
-				ShowInfoF("Unable to load file '%s' for %s font, using default windows font selection instead", font_name, FontSizeToName(fs));
-			}
+		if (!TryLoadFontFromFile(font, logfont)) {
+			ShowInfo("Unable to load file '{}' for {} font, using default windows font selection instead", font, FontSizeToName(fs));
 		}
 	}
 
 	if (logfont.lfFaceName[0] == 0) {
 		logfont.lfWeight = strcasestr(font_name, " bold") != nullptr ? FW_BOLD : FW_NORMAL; // Poor man's way to allow selecting bold fonts.
-		convert_to_fs(font_name, logfont.lfFaceName, lengthof(logfont.lfFaceName));
+		convert_to_fs(font_name, logfont.lfFaceName);
 	}
 
-	HFONT font = CreateFontIndirect(&logfont);
-	if (font == nullptr) {
-		ShowInfoF("Unable to use '%s' for %s font, Win32 reported error 0x%lX, using sprite font instead", font_name, FontSizeToName(fs), GetLastError());
-		return;
-	}
-	DeleteObject(font);
-
-	new Win32FontCache(fs, logfont, settings->size);
+	LoadWin32Font(fs, logfont, GetFontCacheFontSize(fs), font_name);
 }

@@ -21,13 +21,13 @@
 #include "window_func.h"
 #include "waypoint_base.h"
 #include "waypoint_cmd.h"
+#include "zoom_func.h"
 
 #include "widgets/waypoint_widget.h"
 
 #include "table/strings.h"
 
 #include "safeguards.h"
-#include "zoom_func.h"
 
 /** GUI for accessing waypoints and buoys. */
 struct WaypointWindow : Window {
@@ -43,8 +43,25 @@ private:
 	{
 		if (!this->wp->IsInUse()) return this->wp->xy;
 
+		StationType type;
+		switch (this->vt) {
+			case VEH_TRAIN:
+				type = STATION_WAYPOINT;
+				break;
+
+			case VEH_ROAD:
+				type = STATION_ROADWAYPOINT;
+				break;
+
+			case VEH_SHIP:
+				type = STATION_BUOY;
+				break;
+
+			default:
+				NOT_REACHED();
+		}
 		TileArea ta;
-		this->wp->GetTileArea(&ta, this->vt == VEH_TRAIN ? STATION_WAYPOINT : STATION_BUOY);
+		this->wp->GetTileArea(&ta, type);
 		return ta.GetCenterTile();
 	}
 
@@ -54,14 +71,23 @@ public:
 	 * @param desc The description of the window.
 	 * @param window_number The window number, in this case the waypoint's ID.
 	 */
-	WaypointWindow(WindowDesc *desc, WindowNumber window_number) : Window(desc)
+	WaypointWindow(WindowDesc &desc, WindowNumber window_number) : Window(desc)
 	{
 		this->wp = Waypoint::Get(window_number);
-		this->vt = (wp->string_id == STR_SV_STNAME_WAYPOINT) ? VEH_TRAIN : VEH_SHIP;
+		if (wp->string_id == STR_SV_STNAME_WAYPOINT) {
+			this->vt = HasBit(this->wp->waypoint_flags, WPF_ROAD) ? VEH_ROAD : VEH_TRAIN;
+		} else {
+			this->vt = VEH_SHIP;
+		}
 
 		this->CreateNestedTree();
 		if (this->vt == VEH_TRAIN) {
 			this->GetWidget<NWidgetCore>(WID_W_SHOW_VEHICLES)->SetDataTip(STR_TRAIN, STR_STATION_VIEW_SCHEDULED_TRAINS_TOOLTIP);
+		}
+		if (this->vt == VEH_ROAD) {
+			this->GetWidget<NWidgetCore>(WID_W_SHOW_VEHICLES)->SetDataTip(STR_LORRY, STR_STATION_VIEW_SCHEDULED_ROAD_VEHICLES_TOOLTIP);
+		}
+		if (this->vt != VEH_SHIP) {
 			this->GetWidget<NWidgetCore>(WID_W_CENTER_VIEW)->tool_tip = STR_WAYPOINT_VIEW_CENTER_TOOLTIP;
 			this->GetWidget<NWidgetCore>(WID_W_RENAME)->tool_tip = STR_WAYPOINT_VIEW_CHANGE_WAYPOINT_NAME;
 		}
@@ -76,18 +102,28 @@ public:
 		this->OnInvalidateData(0);
 	}
 
-	void Close() override
+	void Close([[maybe_unused]] int data = 0) override
 	{
 		CloseWindowById(GetWindowClassForVehicleType(this->vt), VehicleListIdentifier(VL_STATION_LIST, this->vt, this->owner, this->window_number).Pack(), false);
+		SetViewportCatchmentWaypoint(Waypoint::Get(this->window_number), false);
 		this->Window::Close();
 	}
 
-	void SetStringParameters(int widget) const override
+	void SetStringParameters(WidgetID widget) const override
 	{
 		if (widget == WID_W_CAPTION) SetDParam(0, this->wp->index);
 	}
 
-	void OnClick(Point pt, int widget, int click_count) override
+	void OnPaint() override
+	{
+		extern const Waypoint *_viewport_highlight_waypoint;
+		this->SetWidgetDisabledState(WID_W_CATCHMENT, !this->wp->IsInUse());
+		this->SetWidgetLoweredState(WID_W_CATCHMENT, _viewport_highlight_waypoint == this->wp);
+
+		this->DrawWidgets();
+	}
+
+	void OnClick([[maybe_unused]] Point pt, WidgetID widget, [[maybe_unused]] int click_count) override
 	{
 		switch (widget) {
 			case WID_W_CENTER_VIEW: // scroll to location
@@ -106,6 +142,10 @@ public:
 			case WID_W_SHOW_VEHICLES: // show list of vehicles having this waypoint in their orders
 				ShowVehicleListWindow(this->wp->owner, this->vt, this->wp->index);
 				break;
+
+			case WID_W_CATCHMENT:
+				SetViewportCatchmentWaypoint(Waypoint::Get(this->window_number), !this->IsWidgetLowered(WID_W_CATCHMENT));
+				break;
 		}
 	}
 
@@ -114,7 +154,7 @@ public:
 	 * @param data Information about the changed data.
 	 * @param gui_scope Whether the call is done from GUI scope. You may not do everything when not in GUI scope. See #InvalidateWindowData() for details.
 	 */
-	void OnInvalidateData(int data = 0, bool gui_scope = true) override
+	void OnInvalidateData([[maybe_unused]] int data = 0, [[maybe_unused]] bool gui_scope = true) override
 	{
 		if (!gui_scope) return;
 		/* You can only change your own waypoints */
@@ -136,22 +176,22 @@ public:
 		}
 	}
 
-	void OnQueryTextFinished(char *str) override
+	void OnQueryTextFinished(std::optional<std::string> str) override
 	{
-		if (str == nullptr) return;
+		if (!str.has_value()) return;
 
-		Command<CMD_RENAME_WAYPOINT>::Post(STR_ERROR_CAN_T_CHANGE_WAYPOINT_NAME, this->window_number, str);
+		Command<CMD_RENAME_WAYPOINT>::Post(STR_ERROR_CAN_T_CHANGE_WAYPOINT_NAME, this->window_number, *str);
 	}
 
 };
 
 /** The widgets of the waypoint view. */
-static const NWidgetPart _nested_waypoint_view_widgets[] = {
+static constexpr NWidgetPart _nested_waypoint_view_widgets[] = {
 	NWidget(NWID_HORIZONTAL),
 		NWidget(WWT_CLOSEBOX, COLOUR_GREY),
-		NWidget(WWT_PUSHIMGBTN, COLOUR_GREY, WID_W_RENAME), SetMinimalSize(12, 14), SetDataTip(SPR_RENAME, STR_BUOY_VIEW_CHANGE_BUOY_NAME),
+		NWidget(WWT_PUSHIMGBTN, COLOUR_GREY, WID_W_RENAME), SetAspect(WidgetDimensions::ASPECT_RENAME), SetDataTip(SPR_RENAME, STR_BUOY_VIEW_CHANGE_BUOY_NAME),
 		NWidget(WWT_CAPTION, COLOUR_GREY, WID_W_CAPTION), SetDataTip(STR_WAYPOINT_VIEW_CAPTION, STR_TOOLTIP_WINDOW_TITLE_DRAG_THIS),
-		NWidget(WWT_PUSHIMGBTN, COLOUR_GREY, WID_W_CENTER_VIEW), SetMinimalSize(12, 14), SetDataTip(SPR_GOTO_LOCATION, STR_BUOY_VIEW_CENTER_TOOLTIP),
+		NWidget(WWT_PUSHIMGBTN, COLOUR_GREY, WID_W_CENTER_VIEW), SetAspect(WidgetDimensions::ASPECT_LOCATION), SetDataTip(SPR_GOTO_LOCATION, STR_BUOY_VIEW_CENTER_TOOLTIP),
 		NWidget(WWT_SHADEBOX, COLOUR_GREY),
 		NWidget(WWT_DEFSIZEBOX, COLOUR_GREY),
 		NWidget(WWT_STICKYBOX, COLOUR_GREY),
@@ -162,8 +202,8 @@ static const NWidgetPart _nested_waypoint_view_widgets[] = {
 		EndContainer(),
 	EndContainer(),
 	NWidget(NWID_HORIZONTAL),
-		NWidget(WWT_PANEL, COLOUR_GREY), SetFill(1, 1), SetResize(1, 0), EndContainer(),
-		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_W_SHOW_VEHICLES), SetMinimalSize(15, 12), SetDataTip(STR_SHIP, STR_STATION_VIEW_SCHEDULED_SHIPS_TOOLTIP),
+		NWidget(WWT_TEXTBTN, COLOUR_GREY, WID_W_CATCHMENT), SetMinimalSize(50, 12), SetResize(1, 0), SetFill(1, 1), SetDataTip(STR_BUTTON_CATCHMENT, STR_TOOLTIP_CATCHMENT),
+		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_W_SHOW_VEHICLES), SetAspect(WidgetDimensions::ASPECT_VEHICLE_ICON), SetDataTip(STR_SHIP, STR_STATION_VIEW_SCHEDULED_SHIPS_TOOLTIP),
 		NWidget(WWT_RESIZEBOX, COLOUR_GREY),
 	EndContainer(),
 };
@@ -173,7 +213,7 @@ static WindowDesc _waypoint_view_desc(
 	WDP_AUTO, "view_waypoint", 260, 118,
 	WC_WAYPOINT_VIEW, WC_NONE,
 	0,
-	_nested_waypoint_view_widgets, lengthof(_nested_waypoint_view_widgets)
+	_nested_waypoint_view_widgets
 );
 
 /**
@@ -182,5 +222,5 @@ static WindowDesc _waypoint_view_desc(
  */
 void ShowWaypointWindow(const Waypoint *wp)
 {
-	AllocateWindowDescFront<WaypointWindow>(&_waypoint_view_desc, wp->index);
+	AllocateWindowDescFront<WaypointWindow>(_waypoint_view_desc, wp->index);
 }

@@ -24,7 +24,7 @@ public:
 	/**
 	 * Checks whether the given engine type is valid.
 	 * An engine is valid for a company if it has at least one vehicle of this engine or it's currently buildable.
-	 * @game Outside ScriptCompanyMode scope the function reports all engines valid, which were or will be available at some point.
+	 * @game Outside ScriptCompanyMode scope (ScriptCompanyMode::IsDeity) the function reports all engines valid, which were or will be available at some point.
 	 * @param engine_id The engine to check.
 	 * @return True if and only if the engine type is valid.
 	 */
@@ -32,7 +32,7 @@ public:
 
 	/**
 	 * Checks whether the given engine type is buildable for a company.
-	 * @game Outside ScriptCompanyMode scope the function checks whether the engine is currently buildable by all companies (no exclusive preview).
+	 * @game Outside ScriptCompanyMode scope (ScriptCompanyMode::IsDeity) the function checks whether the engine is currently buildable by all companies (no exclusive preview).
 	 * @param engine_id The engine to check.
 	 * @return True if and only if the engine type is buildable.
 	 */
@@ -44,7 +44,7 @@ public:
 	 * @pre IsValidEngine(engine_id).
 	 * @return The name the engine has.
 	 */
-	static char *GetName(EngineID engine_id);
+	static std::optional<std::string> GetName(EngineID engine_id);
 
 	/**
 	 * Get the cargo-type of an engine. In case it can transport multiple cargoes, it
@@ -89,7 +89,7 @@ public:
 	 * @pre IsValidEngine(engine_id).
 	 * @return The capacity of the engine.
 	 */
-	static int32 GetCapacity(EngineID engine_id);
+	static SQInteger GetCapacity(EngineID engine_id);
 
 	/**
 	 * Get the reliability of an engine. The value is between 0 and 100, where
@@ -100,7 +100,7 @@ public:
 	 * @pre GetVehicleType(engine_id) != ScriptVehicle::VT_TRAIN || !IsWagon(engine_id).
 	 * @return The reliability the engine has.
 	 */
-	static int32 GetReliability(EngineID engine_id);
+	static SQInteger GetReliability(EngineID engine_id);
 
 	/**
 	 * Get the maximum speed of an engine.
@@ -111,7 +111,7 @@ public:
 	 *       This is mph / 1.6, which is roughly km/h.
 	 *       To get km/h multiply this number by 1.00584.
 	 */
-	static int32 GetMaxSpeed(EngineID engine_id);
+	static SQInteger GetMaxSpeed(EngineID engine_id);
 
 	/**
 	 * Get the new cost of an engine.
@@ -125,17 +125,17 @@ public:
 	 * Get the maximum age of a brand new engine.
 	 * @param engine_id The engine to get the maximum age of.
 	 * @pre IsValidEngine(engine_id).
-	 * @returns The maximum age of a new engine in days.
-	 * @note Age is in days; divide by 366 to get per year.
+	 * @returns The maximum age of a new engine in calendar-days.
+	 * @see \ref ScriptCalendarTime
 	 */
-	static int32 GetMaxAge(EngineID engine_id);
+	static SQInteger GetMaxAge(EngineID engine_id);
 
 	/**
 	 * Get the running cost of an engine.
 	 * @param engine_id The engine to get the running cost of.
 	 * @pre IsValidEngine(engine_id).
-	 * @return The running cost of a vehicle per year.
-	 * @note Cost is per year; divide by 365 to get per day.
+	 * @return The running cost of a vehicle per economy-year.
+	 * @see \ref ScriptEconomyTime
 	 */
 	static Money GetRunningCost(EngineID engine_id);
 
@@ -146,7 +146,7 @@ public:
 	 * @pre (GetVehicleType(engine_id) == ScriptVehicle::VT_RAIL || GetVehicleType(engine_id) == ScriptVehicle::VT_ROAD) && !IsWagon(engine_id).
 	 * @return The power of the engine in hp.
 	 */
-	static int32 GetPower(EngineID engine_id);
+	static SQInteger GetPower(EngineID engine_id);
 
 	/**
 	 * Get the weight of an engine.
@@ -155,7 +155,7 @@ public:
 	 * @pre (GetVehicleType(engine_id) == ScriptVehicle::VT_RAIL || GetVehicleType(engine_id) == ScriptVehicle::VT_ROAD).
 	 * @return The weight of the engine in metric tons.
 	 */
-	static int32 GetWeight(EngineID engine_id);
+	static SQInteger GetWeight(EngineID engine_id);
 
 	/**
 	 * Get the maximum tractive effort of an engine.
@@ -164,13 +164,14 @@ public:
 	 * @pre (GetVehicleType(engine_id) == ScriptVehicle::VT_RAIL || GetVehicleType(engine_id) == ScriptVehicle::VT_ROAD) && !IsWagon(engine_id).
 	 * @return The maximum tractive effort of the engine in kN.
 	 */
-	static int32 GetMaxTractiveEffort(EngineID engine_id);
+	static SQInteger GetMaxTractiveEffort(EngineID engine_id);
 
 	/**
-	 * Get the date this engine was designed.
+	 * Get the calendar-date this engine was designed.
 	 * @param engine_id The engine to get the design date of.
 	 * @pre IsValidEngine(engine_id).
-	 * @return The date this engine was designed.
+	 * @return The calendar-date this engine was designed.
+	 * @see \ref ScriptCalendarTime
 	 */
 	static ScriptDate::Date GetDesignDate(EngineID engine_id);
 
@@ -286,7 +287,7 @@ public:
 	 *         not be compared with map distances
 	 * @see ScriptOrder::GetOrderDistance
 	 */
-	static uint GetMaximumOrderDistance(EngineID engine_id);
+	static SQInteger GetMaximumOrderDistance(EngineID engine_id);
 
 	/**
 	 * Allows a company to use an engine before its intro date or after retirement.

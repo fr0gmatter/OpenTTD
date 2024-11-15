@@ -44,6 +44,7 @@ void DrawShipImage(const Vehicle *v, const Rect &r, VehicleID selection, EngineI
 	int y = ScaleSpriteTrad(-1) + CenterBounds(r.top, r.bottom, 0);
 
 	seq.Draw(x, y, GetVehiclePalette(v), false);
+	if (v->cargo_cap > 0) DrawCargoIconOverlay(x, y, v->cargo_type);
 
 	if (v->index == selection) {
 		x += x_offs;
@@ -63,29 +64,29 @@ void DrawShipDetails(const Vehicle *v, const Rect &r)
 {
 	int y = r.top;
 
-	SetDParam(0, v->engine_type);
+	SetDParam(0, PackEngineNameDParam(v->engine_type, EngineNameContext::VehicleDetails));
 	SetDParam(1, v->build_year);
 	SetDParam(2, v->value);
 	DrawString(r.left, r.right, y, STR_VEHICLE_INFO_BUILT_VALUE);
-	y += FONT_HEIGHT_NORMAL;
+	y += GetCharacterHeight(FS_NORMAL);
 
 	SetDParam(0, v->cargo_type);
 	SetDParam(1, v->cargo_cap);
 	SetDParam(4, GetCargoSubtypeText(v));
 	DrawString(r.left, r.right, y, STR_VEHICLE_INFO_CAPACITY);
-	y += FONT_HEIGHT_NORMAL + WidgetDimensions::scaled.vsep_normal;
+	y += GetCharacterHeight(FS_NORMAL) + WidgetDimensions::scaled.vsep_normal;
 
 	StringID str = STR_VEHICLE_DETAILS_CARGO_EMPTY;
 	if (v->cargo.StoredCount() > 0) {
 		SetDParam(0, v->cargo_type);
 		SetDParam(1, v->cargo.StoredCount());
-		SetDParam(2, v->cargo.Source());
+		SetDParam(2, v->cargo.GetFirstStation());
 		str = STR_VEHICLE_DETAILS_CARGO_FROM;
 	}
 	DrawString(r.left, r.right, y, str);
-	y += FONT_HEIGHT_NORMAL + WidgetDimensions::scaled.vsep_normal;
+	y += GetCharacterHeight(FS_NORMAL) + WidgetDimensions::scaled.vsep_normal;
 
 	/* Draw Transfer credits text */
-	SetDParam(0, v->cargo.FeederShare());
+	SetDParam(0, v->cargo.GetFeederShare());
 	DrawString(r.left, r.right, y, STR_VEHICLE_INFO_FEEDER_CARGO_VALUE);
 }
